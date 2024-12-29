@@ -1,8 +1,8 @@
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 use clap::Parser;
-use tokio::io::AsyncWriteExt;
 
+use crate::template::Template;
 
 #[derive(Debug, Parser)]
 pub struct Render {
@@ -42,20 +42,18 @@ pub enum RenderError {
 }
 
 impl Render {
-    pub async fn run<T>(self, template: T) -> Result<(), RenderError>
-    where
-        T: AsRef<minijinja::Environment<'static>> + Send,
-    {
-        let defines = BTreeMap::from_iter(
-            self.defines
-                .iter()
-                .map(|Define(ref k, ref v)| (k.as_str(), v.as_str())),
-        );
-        let content = template.as_ref().render_str(&self.file, &defines)?;
-        if let Some(output) = &self.output {
-            tokio::fs::write(output, content).await?;
-        } else {
-            tokio::io::stdout().write_all(content.as_bytes()).await?;
+    pub async fn run(self, template: Template) -> Result<(), RenderError> {
+        let defines: HashMap<_, _> = self.defines.iter().map(|d| (&d.0, &d.1)).collect();
+        let rendered = template.render(&self.file, &defines)?;
+
+        match self.output {
+            Some(path) => {
+                let mut file = tokio::fs::File::create(path).await?;
+                tokio::io::AsyncWriteExt::write_all(&mut file, rendered.as_bytes()).await?;
+            }
+            None => {
+                println!("{}", rendered);
+            }
         }
 
         Ok(())

@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{header::IntoHeaderName, HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{HeaderName, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
     Router,
@@ -11,9 +11,7 @@ use mlua::prelude::*;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 
-use crate::runtime::RuntimeInitError;
-
-use super::{AppContext, AppState};
+use super::{AppContext, AppState, AppStateError};
 
 #[derive(Debug, Parser)]
 pub struct Serve {
@@ -27,23 +25,23 @@ pub enum ServeError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("runtime init error: {0}")]
-    Runtime(#[from] RuntimeInitError),
+    #[error("app state error: {0}")]
+    Runtime(#[from] AppStateError),
 }
 
 impl Serve {
     pub async fn run(self, ctx: AppContext) -> Result<(), ServeError> {
         let listener = TcpListener::bind(&self.listen).await?;
+        let assets_dir = ctx.assets_dir();
+        let state = ctx.state().await?;
 
         let app = Router::new()
-            .nest_service("/assets", ServeDir::new(ctx.assets_dir()))
+            .nest_service("/assets", ServeDir::new(assets_dir))
             .route("/", any(handle_request))
             .route("/*path", any(handle_request))
-            .with_state(ctx.state().await?);
+            .with_state(state);
 
-        if let Err(err) = axum::serve(listener, app).await {
-            tracing::error!("Error serving web: {err}");
-        }
+        axum::serve(listener, app).await?;
 
         Ok(())
     }
@@ -70,7 +68,7 @@ async fn handle_request(
     State(state): State<AppState>,
     request: Request<Body>,
 ) -> Result<Response<Body>, LuaServeError> {
-    let lua = state.as_ref();
+    let lua = state.runtime.lua();
     let globals = lua.globals();
 
     let lua_request = lua.create_table()?;

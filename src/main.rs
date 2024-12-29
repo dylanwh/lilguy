@@ -2,6 +2,7 @@ mod command;
 mod database;
 mod runtime;
 mod template;
+mod reload;
 
 use command::Args;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};

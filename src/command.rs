@@ -6,11 +6,11 @@ pub mod serve;
 
 use crate::{
     database::{Database, DatabaseError},
+    reload::Reloaders,
     runtime::{Runtime, RuntimeInitError},
     template::Template,
 };
 use clap::{Parser, Subcommand};
-use mlua::Lua;
 use std::{path::PathBuf, sync::Arc};
 
 use new::{New, NewError};
@@ -40,77 +40,8 @@ impl Args {
     }
 
     pub async fn run(self) -> Result<(), CommandError> {
-        let name = self.name;
         let root = self.root.canonicalize()?;
-        self.command.run(AppContext { name, root }).await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AppState {
-    #[allow(unused)]
-    pub ctx: Arc<AppContext>,
-    pub runtime: Runtime,
-    #[allow(unused)]
-    pub database: Database,
-    #[allow(unused)]
-    pub template: Template,
-}
-
-impl AsRef<Lua> for AppState {
-    fn as_ref(&self) -> &Lua {
-        self.runtime.as_ref()
-    }
-}
-
-#[derive(Debug)]
-pub struct AppContext {
-    pub name: String,
-    pub root: PathBuf,
-}
-
-impl AppContext {
-    pub async fn runtime(&self) -> Result<Runtime, RuntimeInitError> {
-        let runtime = Runtime::builder()
-            .name(&self.name)
-            .root(&self.root)
-            .database(self.database().await?)
-            .template(self.template()?)
-            .build();
-
-        runtime.init()?;
-
-        Ok(runtime)
-    }
-
-    pub async fn state(self) -> Result<AppState, RuntimeInitError> {
-        let runtime = self.runtime().await?;
-        let database = runtime.database.clone();
-        let template = runtime.template.clone();
-        let ctx = Arc::new(self);
-
-        Ok(AppState {
-            ctx,
-            runtime,
-            database,
-            template,
-        })
-    }
-
-    pub async fn database(&self) -> Result<Database, DatabaseError> {
-        Database::open(&self.name, &self.root).await
-    }
-
-    pub fn template(&self) -> Result<Template, minijinja::Error> {
-        Template::new(self.templates_dir())
-    }
-
-    pub fn templates_dir(&self) -> PathBuf {
-        self.root.join("templates")
-    }
-
-    pub fn assets_dir(&self) -> PathBuf {
-        self.root.join("assets")
+        self.command.run(AppContext { root }).await
     }
 }
 
@@ -176,8 +107,8 @@ impl Command {
                 Ok(())
             }
             Command::Render(render) => {
-                let template = Template::new(ctx.templates_dir())?;
-                render.run(template).await?;
+                let templates = Template::new(ctx.templates_dir())?;
+                render.run(templates).await?;
                 Ok(())
             }
             Command::Run(run) => {
@@ -191,5 +122,73 @@ impl Command {
                 Ok(())
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub runtime: Runtime,
+
+    #[allow(unused)]
+    pub reloaders: Arc<Reloaders>,
+
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AppStateError {
+    #[error("runtime init error: {0}")]
+    Runtime(#[from] RuntimeInitError),
+
+    #[error("watcher error: {0}")]
+    Watcher(#[from] notify::Error),
+}
+
+#[derive(Debug)]
+pub struct AppContext {
+    pub root: PathBuf,
+}
+
+impl AppContext {
+    pub async fn runtime(&self) -> Result<Runtime, RuntimeInitError> {
+        let runtime = Runtime::builder()
+            .root(&self.root)
+            .database(self.database().await?)
+            .template(self.template()?)
+            .build();
+
+        runtime.init()?;
+
+        Ok(runtime)
+    }
+
+    pub async fn state(self) -> Result<AppState, AppStateError> {
+        let runtime = self.runtime().await?;
+        let template = runtime.template.clone();
+        let mut reloaders = Reloaders::new();
+        reloaders.add(runtime.clone())?;
+        reloaders.add(template.clone())?;
+
+        let reloaders = Arc::new(reloaders);
+
+        Ok(AppState {
+            runtime,
+            reloaders,
+        })
+    }
+
+    pub async fn database(&self) -> Result<Database, DatabaseError> {
+        Database::open(&self.root).await
+    }
+
+    pub fn template(&self) -> Result<Template, minijinja::Error> {
+        Template::new(self.templates_dir())
+    }
+
+    pub fn templates_dir(&self) -> PathBuf {
+        self.root.join("templates")
+    }
+
+    pub fn assets_dir(&self) -> PathBuf {
+        self.root.join("assets")
     }
 }
