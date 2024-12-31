@@ -1,108 +1,90 @@
 pub use mlua::prelude::*;
 use mlua::IntoLua;
-use notify::RecursiveMode;
-use parking_lot::RwLock;
-use path_tree::PathTree;
+use parking_lot::Mutex;
 use std::{
-    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
-use typed_builder::TypedBuilder;
 
 use crate::{
     database::{global::Global, Database},
-    reload::Reload,
-    template::Template,
+    routes::Routes,
+    template::{self, Template},
+    watch::{self, watch, MatchExtension, MatchParent, Matcher},
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
 
+pub struct App {
+    database: Database,
+    routes: Routes,
+}
+
 #[derive(Debug, thiserror::Error)]
-pub enum RuntimeInitError {
+pub enum Error {
     #[error("lua error: {0}")]
     Lua(#[from] LuaError),
 
-    #[error("template error: {0}")]
-    Template(#[from] minijinja::Error),
+    #[error("lua not initialized")]
+    LuaNotStarted,
+
+    #[error("services not started")]
+    ServicesNotStarted,
 
     #[error("database error: {0}")]
-    Database(#[from] tokio_rusqlite::Error),
+    Database(#[from] crate::database::Error),
 }
 
-#[derive(Debug, Clone, TypedBuilder)]
-#[builder(field_defaults(setter(into)))]
+#[derive(Debug, Clone)]
 pub struct Runtime {
-    root: PathBuf,
+    directory: PathBuf,
 
-    #[builder(default)]
-    lua: Arc<RwLock<Lua>>,
+    lua: Arc<Mutex<Option<Lua>>>,
+    services: Arc<Mutex<Option<Services>>>,
 
-    pub database: Database,
-    pub template: Template,
+    watching: Arc<AtomicBool>,
 }
 
-impl LuaUserData for Template {
-    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        // render(name, context)
-        methods.add_method(
-            "render",
-            |lua, this, (name, context): (String, LuaValue)| {
-                let rendered = this
-                    .render(name.as_str(), context)
-                    .map_err(LuaError::external)?;
-                lua.create_string(&rendered)
-            },
-        );
-    }
-}
-
-impl Reload for Runtime {
-    fn name(&self) -> &'static str {
-        "runtime"
-    }
-
-    fn reload(&self, files: Vec<PathBuf>) {
-        println!("reloading files: {:?}", files);
-        let lua = Lua::new();
-        if let Err(err) = init(
-            &lua,
-            &self.root,
-            self.database.clone(),
-            self.template.clone(),
-        ) {
-            eprintln!("error reloading lua runtime: {err}");
-            tracing::error!(?err, "error reloading lua runtime");
-            return;
-        }
-        self.set_lua(lua);
-    }
-
-    fn files(&self) -> Vec<(PathBuf, notify::RecursiveMode)> {
-        let lua = &self.lua();
-        let mut files = vec![];
-
-        tokio::task::block_in_place(|| {
-            lua.globals()
-                .get::<LuaTable>("WATCH_FILES")
-                .expect("WATCH_FILES not set")
-                .for_each(|_: String, path: String| {
-                    files.push((PathBuf::from(path), RecursiveMode::NonRecursive));
-                    Ok(())
-                })
-                .expect("error iterating over watch files");
-        });
-
-        files
-    }
+#[derive(Debug, Clone)]
+struct Services {
+    database: Database,
+    template: Template,
 }
 
 impl Runtime {
+    pub fn new(directory: PathBuf) -> Self {
+        let lua = Arc::new(Mutex::new(None));
+        let services = Arc::new(Mutex::new(None));
+
+        // let watcher = watch(
+        //     directory.clone(),
+        //     vec![
+        //         ("lua", Box::new(MatchExtension("lua".to_string()))),
+        //         (
+        //             "templates",
+        //             Box::new(MatchParent(directory.join("templates"))),
+        //         ),
+        //     ],
+        // ).await;
+        // let x = watcher.recv();
+
+        Self {
+            directory,
+            lua,
+            services,
+            watching: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn assets_dir(&self) -> PathBuf {
+        self.directory.join("assets")
+    }
+
     /// load the main lua file and set up the environment
     #[allow(dependency_on_unit_never_type_fallback)]
-    pub async fn run(&self, name: String, args: Vec<String>) -> Result<(), LuaError> {
-        let lua = self.lua();
+    pub async fn run(&self, name: String, args: Vec<String>) -> Result<(), Error> {
+        let lua = self.lua()?;
         let globals = lua.globals();
         let commands = globals.get::<LuaTable>("commands")?;
         let func: LuaFunction = commands.get(name)?;
@@ -115,141 +97,155 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn lua(&self) -> Lua {
-        self.lua.read().clone()
+    pub fn lua(&self) -> Result<Lua, Error> {
+        let lua = self
+            .lua
+            .lock()
+            .clone()
+            .ok_or_else(|| Error::LuaNotStarted)?;
+
+        Ok(lua)
     }
 
     pub fn set_lua(&self, lua: Lua) {
-        *self.lua.write() = lua;
+        self.lua.lock().replace(lua);
     }
 
-    pub fn init(&self) -> Result<(), RuntimeInitError> {
-        init(
-            self.lua.read(),
-            &self.root,
-            self.database.clone(),
-            self.template.clone(),
-        )?;
+    pub fn start_services(&self) -> Result<(), Error> {
+        let mut services = self.services.lock();
+        if services.is_none() {
+            let database = Database::open(self.directory.join("app.db"))?;
+            let template = Template::new(self.directory.join("templates"));
+            services.replace(Services { database, template });
+        }
         Ok(())
+    }
+
+    pub fn services(&self) -> Result<Services, Error> {
+        self.services
+            .lock()
+            .clone()
+            .ok_or_else(|| Error::ServicesNotStarted)
+    }
+
+    pub async fn start_watcher(&self) {
+        if self.watching.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!("watcher already started");
+            return;
+        }
+        tracing::info!("starting watcher");
+
+        let (mut rx, guard) = watch(
+            self.directory.clone(),
+            vec![
+                ("runtime", MatchExtension("lua".to_string()).into()),
+                (
+                    "templates",
+                    MatchParent(self.directory.join("templates")).into(),
+                ),
+            ],
+        )
+        .await;
+
+        let runtime = self.clone();
+        let template = runtime.services().unwrap().template.clone();
+
+        tokio::spawn(async move {
+            while let Some((name, changes)) = rx.recv().await {
+                tracing::info!("reload {name}");
+                match name {
+                    "runtime" => {
+                        tracing::info!("restarting runtime");
+                        runtime.restart().await.unwrap();
+                    }
+                    "templates" => {
+                        tracing::info!("reloading templates");
+                        template
+                            .call(|env| {
+                                env.clear_templates();
+                                Ok(())
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+            }
+
+            drop(guard);
+        });
+
+
+        tracing::info!("watcher started");
+        self.watching
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub async fn start(&self) -> Result<(), Error> {
+        self.start_services()?;
+        self.start_watcher().await;
+
+        let lua = self.new_lua().await?;
+        self.set_lua(lua);
+        Ok(())
+    }
+
+    pub async fn restart(&self) -> Result<(), Error> {
+        let lua = self.new_lua().await?;
+        self.set_lua(lua);
+        Ok(())
+    }
+
+    #[allow(dependency_on_unit_never_type_fallback)]
+    async fn new_lua(&self) -> Result<Lua, Error> {
+        let services = self.services()?;
+        let lua = Lua::new();
+        lua.load_std_libs(
+            LuaStdLib::TABLE | LuaStdLib::STRING | LuaStdLib::UTF8 | LuaStdLib::MATH,
+        )?;
+        let globals = lua.globals();
+        let package = globals.get::<LuaTable>("package")?;
+        #[cfg(windows)]
+        package.set("path", format!("?.lua"))?;
+        #[cfg(not(windows))]
+        package.set("path", self.directory.join("?.lua").to_string_lossy())?;
+        lua.load(LUA_PRELUDE).exec()?;
+        globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
+
+        let json = lua.create_table()?;
+        json.set("encode", lua.create_function(json_encode)?)?;
+        json.set("decode", lua.create_function(json_decode)?)?;
+        globals.set("json", json)?;
+
+        globals.set("global", Global::new(&services.database))?;
+
+        globals.set("routes", Routes::new())?;
+        globals.set("database", services.database.clone())?;
+        globals.set("template", services.template.clone())?;
+        globals.set("null", lua.null())?;
+        globals.set("array_mt", lua.array_metatable())?;
+
+        lua.set_warning_function(|_, msg, _| {
+            tracing::warn!("{msg}");
+            Ok(())
+        });
+
+        let require = globals.get::<LuaFunction>("require")?;
+        require.call_async("app").await?;
+        Ok(lua)
     }
 }
 
-#[allow(dependency_on_unit_never_type_fallback)]
-pub fn init<L>(
-    lua: L,
-    root: &Path,
-    database: Database,
-    template: Template,
-) -> Result<(), RuntimeInitError>
-where
-    L: Deref<Target = Lua>,
-{
-    let lua = &*lua;
-    let package_path = root.join("?.lua");
+fn json_encode(_: &Lua, value: LuaValue) -> LuaResult<String> {
+    serde_json::to_string(&value).map_err(LuaError::external)
+}
 
-    lua.load_std_libs(LuaStdLib::TABLE | LuaStdLib::STRING | LuaStdLib::UTF8 | LuaStdLib::MATH)?;
-    let globals = lua.globals();
-    let package = globals.get::<LuaTable>("package")?;
-    package.set("path", package_path.to_string_lossy())?;
-
-    lua.load(LUA_PRELUDE).exec()?;
-
-    globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
-
-    let json = lua.create_table()?;
-    json.set(
-        "encode",
-        lua.create_function(|_, value: LuaValue| {
-            serde_json::to_string(&value).map_err(LuaError::external)
-        })?,
-    )?;
-    json.set(
-        "decode",
-        lua.create_function(|lua, value: String| {
-            let value: serde_json::Value =
-                serde_json::from_str(&value).map_err(LuaError::external)?;
-            lua.to_value(&value)
-        })?,
-    )?;
-    globals.set("json", json)?;
-
-    globals.set(
-        "global",
-        Global::builder().conn(database.as_ref().clone()).build(),
-    )?;
-
-    globals.set("routes", Router(PathTree::new()))?;
-    globals.set("template", template)?;
-    let route_mt = lua.create_table()?;
-    route_mt.set(
-        "__call",
-        lua.create_async_function(|_, route: LuaTable| async move {
-            let func = route.get::<LuaFunction>("func")?;
-            let args = route.get::<LuaTable>("params")?;
-            func.call_async::<LuaMultiValue>(args).await
-        })?,
-    )?;
-    lua.set_named_registry_value("route_mt", route_mt)?;
-    globals.set("null", lua.null())?;
-    globals.set("array_mt", lua.array_metatable())?;
-
-    let require = globals.get::<LuaFunction>("require")?;
-    require.call("app")?;
-
-    Ok(())
+fn json_decode(lua: &Lua, value: String) -> LuaResult<LuaValue> {
+    let value: serde_json::Value = serde_json::from_str(&value).map_err(LuaError::external)?;
+    lua.to_value(&value)
 }
 
 async fn builtin_sleep(_lua: Lua, seconds: f64) -> LuaResult<()> {
     tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
     Ok(())
-}
-
-pub struct Router(PathTree<LuaFunction>);
-
-impl Deref for Router {
-    type Target = PathTree<LuaFunction>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Router {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-/// routes variable
-/// routes["/"] = function(request, path) return path end
-/// routes["/foo"](request) -> "/"
-impl LuaUserData for Router {
-    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method(LuaMetaMethod::Index, |lua, this, key: String| {
-            let route = this.find(key.as_str());
-            match route {
-                Some((func, path)) => {
-                    let pattern = lua.create_string(path.pattern())?;
-                    let params = lua.create_table_from(path.params_iter())?;
-                    let route = lua.create_table()?;
-                    route.set("pattern", pattern)?;
-                    route.set("params", params)?;
-                    route.set("func", func)?;
-                    let route_mt = lua.named_registry_value::<LuaTable>("route_mt")?;
-                    route.set_metatable(Some(route_mt));
-
-                    Ok(LuaValue::Table(route))
-                }
-                None => Ok(LuaValue::Nil),
-            }
-        });
-
-        methods.add_meta_method_mut(
-            LuaMetaMethod::NewIndex,
-            |_, this, (key, function): (String, LuaFunction)| {
-                let size = this.insert(&key, function);
-                Ok(size)
-            },
-        );
-    }
 }

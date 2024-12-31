@@ -1,8 +1,7 @@
 use clap::Parser;
-use mlua::prelude::LuaError;
 
 use crate::runtime::Runtime;
-pub type RunError = LuaError;
+pub use crate::runtime::Error;
 
 #[derive(Debug, Parser)]
 pub struct Run {
@@ -14,7 +13,7 @@ pub struct Run {
 }
 
 impl Run {
-    pub async fn run(self, runtime: Runtime) -> Result<(), RunError> {
+    pub async fn run(self, runtime: Runtime) -> Result<(), Error> {
         runtime.run(self.name, self.args).await?;
 
         Ok(())

@@ -1,14 +1,13 @@
+use super::Database;
 use mlua::prelude::*;
 use rusqlite::{params, OptionalExtension, Row, ToSql};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::mpsc::{self, Receiver};
-use tokio_rusqlite::Connection;
-use typed_builder::TypedBuilder;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GlobalTableError {
     #[error("database error: {0}")]
-    Database(#[from] tokio_rusqlite::Error),
+    Database(#[from] super::Error),
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
@@ -24,10 +23,10 @@ pub enum GlobalTableError {
 /// This is table in the lua sense.
 /// Each one maps to a sqlite table, but the schema is always the same.
 /// The contents are (id, optional key, value).
-#[derive(Debug, TypedBuilder)]
+#[derive(Debug)]
 pub struct GlobalTable {
     pub name: String,
-    pub conn: Connection,
+    pub database: Database,
 }
 
 #[derive(Debug, Clone)]
@@ -105,13 +104,17 @@ pub struct GlobalTablePairs<V: DeserializeOwned>(
 );
 
 impl GlobalTable {
+    fn new(name: String, database: Database) -> Self {
+        Self { name, database }
+    }
+
     fn sql_name(&self) -> String {
         format!("\"lg_global_{}\"", self.name.replace("\"", "\"\""))
     }
 
-    pub async fn create(&self) -> Result<(), tokio_rusqlite::Error> {
+    pub async fn create(&self) -> Result<(), super::Error> {
         let sql_name = self.sql_name();
-        self.conn
+        self.database
             .call(move |conn| {
                 conn.execute(
                     &format!(
@@ -143,7 +146,7 @@ impl GlobalTable {
         let sql_name = self.sql_name();
         let key = key.try_into().map_err(|_| GlobalTableError::InvalidKey)?;
         let value = self
-            .conn
+            .database
             .call(move |conn| {
                 let sql = format!(
                     "SELECT jsonb(value) FROM {sql_name} WHERE {key_column} = ?",
@@ -173,7 +176,7 @@ impl GlobalTable {
         let column = key.column();
         let value = serde_sqlite_jsonb::to_vec(&value)?;
 
-        self.conn
+        self.database
             .call(move |conn| {
                 let sql = format!(
                     "INSERT OR REPLACE INTO {sql_name} ({column}, value) VALUES (?, jsonb(?))",
@@ -194,7 +197,7 @@ impl GlobalTable {
         let key = key.try_into().map_err(|_| GlobalTableError::InvalidKey)?;
         let column = key.column();
 
-        self.conn
+        self.database
             .call(move |conn| {
                 conn.execute(
                     &format!("DELETE FROM {sql_name} WHERE {column} = ?",),
@@ -214,7 +217,7 @@ impl GlobalTable {
     pub async fn len(&self) -> Result<usize, GlobalTableError> {
         let sql_name = self.sql_name();
         let len: usize = self
-            .conn
+            .database
             .call(move |conn| {
                 let len = conn.query_row(
                     &format!("SELECT max(key_int) FROM {sql_name}",),
@@ -235,7 +238,7 @@ impl GlobalTable {
         V: DeserializeOwned + Send + 'static,
     {
         let sql_name = self.sql_name();
-        let conn = self.conn.clone();
+        let conn = self.database.clone();
         let (tx, rx) = mpsc::channel(1);
 
         tokio::spawn(async move {
@@ -257,9 +260,9 @@ impl GlobalTable {
         GlobalTablePairs(rx)
     }
 
-    pub async fn drop(&self) -> Result<(), tokio_rusqlite::Error> {
+    pub async fn drop(&self) -> Result<(), super::Error> {
         let sql_name = self.sql_name();
-        self.conn
+        self.database
             .call(move |conn| {
                 conn.execute(&format!("DROP TABLE IF EXISTS {sql_name}",), [])?;
 
@@ -277,7 +280,7 @@ pub enum GlobalTablePairsError {
     InvalidKeys,
 
     #[error("async_rusqlite error: {0}")]
-    Database(#[from] tokio_rusqlite::Error),
+    Database(#[from] super::Error),
 
     #[error("rusqlite error: {0}")]
     Rusqlite(#[from] rusqlite::Error),
@@ -328,19 +331,22 @@ impl LuaUserData for GlobalTablePairs<serde_json::Value> {
     }
 }
 
-#[derive(Debug, TypedBuilder)]
+#[derive(Debug)]
 pub struct Global {
-    conn: Connection,
+    database: Database,
+}
+
+impl Global {
+    pub fn new(database: &Database) -> Self {
+        Self { database: database.clone() }
+    }
 }
 
 // global.name creates a new GlobalTable
 impl LuaUserData for Global {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_meta_method(LuaMetaMethod::Index, |_lua, this, key: String| async move {
-            let table = GlobalTable::builder()
-                .name(key)
-                .conn(this.conn.clone())
-                .build();
+            let table = GlobalTable::new(key, this.database.clone());
             table.create().await.map_err(LuaError::external)?;
             Ok(table)
         });
@@ -350,10 +356,7 @@ impl LuaUserData for Global {
             LuaMetaMethod::NewIndex,
             |_, this, (key, value): (String, LuaValue)| async move {
                 if value.is_nil() {
-                    let table = GlobalTable::builder()
-                        .name(key)
-                        .conn(this.conn.clone())
-                        .build();
+                    let table = GlobalTable::new(key, this.database.clone());
                     table.drop().await.map_err(LuaError::external)?;
                     return Ok(());
                 }

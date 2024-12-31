@@ -1,17 +1,27 @@
+use std::{
+    collections::HashMap,
+    ops::Deref,
+    sync::{Arc, Weak},
+};
+
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{HeaderName, StatusCode},
+    http::{header::CONTENT_TYPE, HeaderName, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
     Router,
 };
+use bytes::BytesMut;
 use clap::Parser;
 use mlua::prelude::*;
+use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
+use tower_http::trace::{self, TraceLayer};
+use tracing::Level;
 
-use super::{AppContext, AppState, AppStateError};
+use crate::{routes::Routes, runtime::{self, Runtime}, template::Template};
 
 #[derive(Debug, Parser)]
 pub struct Serve {
@@ -21,25 +31,32 @@ pub struct Serve {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ServeError {
+pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("app state error: {0}")]
-    Runtime(#[from] AppStateError),
+    #[error("runtime error: {0}")]
+    Runtime(#[from] runtime::Error),
 }
 
 impl Serve {
-    pub async fn run(self, ctx: AppContext) -> Result<(), ServeError> {
+    pub async fn run(self, runtime: Runtime) -> Result<(), Error> {
         let listener = TcpListener::bind(&self.listen).await?;
-        let assets_dir = ctx.assets_dir();
-        let state = ctx.state().await?;
+        runtime.start().await?;
+
+        let assets_dir = runtime.assets_dir();
 
         let app = Router::new()
             .nest_service("/assets", ServeDir::new(assets_dir))
             .route("/", any(handle_request))
             .route("/*path", any(handle_request))
-            .with_state(state);
+            .with_state(runtime)
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
+                    .on_request(trace::DefaultOnRequest::new().level(Level::INFO))
+                    .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
+            );
 
         axum::serve(listener, app).await?;
 
@@ -48,10 +65,15 @@ impl Serve {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("lua error: {source}")]
-struct LuaServeError {
-    #[from]
-    source: LuaError,
+enum LuaServeError {
+    #[error("runtime error: {0}")]
+    Runtime(#[from] runtime::Error),
+
+    #[error("lua error: {0}")]
+    Lua(#[from] LuaError),
+
+    #[error("http status: {0}")]
+    Status(StatusCode),
 }
 
 impl IntoResponse for LuaServeError {
@@ -63,57 +85,173 @@ impl IntoResponse for LuaServeError {
     }
 }
 
+struct LuaRequest {
+    /// the route key, or "pattern" e.g. "/users/:id"
+    route: Option<String>,
+    /// the parameters extracted from the route, e.g. { id = "1" }
+    params: HashMap<String, String>,
+
+    req: Request<Body>,
+}
+
+impl LuaRequest {
+    fn new(req: Request<Body>, path: Option<path_tree::Path>) -> Self {
+        let route = path.as_ref().map(|p| p.pattern().to_string());
+        let params = path
+            .map(|p| {
+                p.params()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Self { route, params, req }
+    }
+}
+
+impl Deref for LuaRequest {
+    type Target = Request<Body>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.req
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct LuaResponse {
+    inner: Arc<Mutex<Response<BytesMut>>>,
+}
+
+#[derive(Debug, Clone)]
+struct LuaResponseHeaders {
+    inner: Weak<Mutex<Response<BytesMut>>>,
+}
+
+impl LuaUserData for LuaRequest {}
+
+impl LuaUserData for LuaResponse {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("status", |_, this| {
+            let inner = this.inner.lock();
+            Ok(inner.status().as_u16())
+        });
+        fields.add_field_method_set("status", |_, this, status: u16| {
+            let mut inner = this.inner.lock();
+            *inner.status_mut() = StatusCode::from_u16(status).map_err(LuaError::external)?;
+            Ok(())
+        });
+
+        fields.add_field_method_set("headers", |_, this, new_headers: LuaTable| {
+            let mut inner = this.inner.lock();
+            let headers = inner.headers_mut();
+            headers.clear();
+            new_headers.for_each(|key: String, value: String| {
+                headers.append(
+                    HeaderName::from_bytes(key.as_bytes())
+                        .map_err(|_| LuaError::external("invalid header name"))?,
+                    value
+                        .parse()
+                        .map_err(|_| LuaError::external("invalid header value"))?,
+                );
+                Ok(())
+            })?;
+            Ok(())
+        });
+        fields.add_field_method_get("headers", |_, this| {
+            Ok(LuaResponseHeaders {
+                inner: Arc::downgrade(&this.inner),
+            })
+        });
+        fields.add_field_method_set("body", |_, this, text: String| {
+            let mut inner = this.inner.lock();
+            *inner.body_mut() = BytesMut::from(text.as_bytes());
+            Ok(())
+        });
+    }
+
+    // fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+    // }
+}
+
+impl LuaUserData for LuaResponseHeaders {
+    // __index, __newindex metamethods
+
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method(LuaMetaMethod::Index, |_lua, this, key: String| {
+            let inner = this
+                .inner
+                .upgrade()
+                .ok_or_else(|| LuaError::external("response has been dropped"))?;
+            let inner = inner.lock();
+            let key = HeaderName::from_bytes(key.as_bytes())
+                .map_err(|_| LuaError::external("invalid header name"))?;
+            let value = inner
+                .headers()
+                .get(key)
+                .map(|v| v.to_str().unwrap_or(""))
+                .unwrap_or("");
+            Ok(value.to_string())
+        });
+        methods.add_meta_method(
+            LuaMetaMethod::NewIndex,
+            |_lua, this, (key, value): (String, String)| {
+                let inner = this
+                    .inner
+                    .upgrade()
+                    .ok_or_else(|| LuaError::external("response has been dropped"))?;
+                let mut inner = inner.lock();
+                let key = HeaderName::from_bytes(key.as_bytes())
+                    .map_err(|_| LuaError::external("invalid header name"))?;
+                inner.headers_mut().append(
+                    key,
+                    value
+                        .parse()
+                        .map_err(|_| LuaError::external("invalid header value"))?,
+                );
+                Ok(())
+            },
+        );
+    }
+}
+
+impl IntoResponse for LuaResponse {
+    fn into_response(self) -> Response<Body> {
+        let inner = match Arc::try_unwrap(self.inner) {
+            Ok(inner) => inner.into_inner(),
+            Err(outer) => {
+                tracing::warn!("lua response had to be cloned because of existing references");
+                outer.lock().clone()
+            }
+        };
+        inner.map(|b| Body::from(b.freeze()))
+    }
+}
+
 async fn handle_request(
     // request
-    State(state): State<AppState>,
+    State(runtime): State<Runtime>,
     request: Request<Body>,
-) -> Result<Response<Body>, LuaServeError> {
-    let lua = state.runtime.lua();
+) -> Result<LuaResponse, LuaServeError> {
+    let lua = runtime.lua()?;
     let globals = lua.globals();
 
-    let lua_request = lua.create_table()?;
-    lua_request.set("method", request.method().as_str())?;
-    lua_request.set("path", request.uri().path())?;
-    lua_request.set("query", request.uri().query())?;
-    lua_request.set("headers", {
-        let headers = request.headers();
-        let lua_headers = lua.create_table()?;
-        for (key, value) in headers {
-            let key = key.as_str();
-            let value = value
-                .to_str()
-                .map_err(|_| LuaError::external("invalid header value"))?;
-            // if header exists, append to existing value using comma as per RFC 2616
-            let value = match lua_headers.get::<Option<String>>(key)? {
-                Some(existing) => format!("{existing}, {value}"),
-                _ => value.to_string(),
-            };
-            lua_headers.set(key, value)?;
+    let routes = globals.get::<LuaUserDataRef<Routes>>("routes")?;
+    let path = request.uri().path().to_owned();
+    let res = LuaResponse::default();
+    match routes.find(&path) {
+        Some((handler, path)) => {
+            let req = LuaRequest::new(request, Some(path));
+            handler.call_async::<()>((req, res.clone())).await?;
         }
-        lua_headers
-    })?;
+        None => {
+            let Some(not_found) = globals.get::<Option<LuaFunction>>("not_found")? else {
+                return Err(LuaServeError::Status(StatusCode::NOT_FOUND));
+            };
+            let req = LuaRequest::new(request, None);
+            not_found.call_async::<()>((req, res.clone())).await?;
+        }
+    };
 
-    let serve = globals.get::<LuaFunction>("serve")?;
-    let (lua_status, lua_headers, lua_body) = serve
-        .call_async::<(u16, LuaTable, String)>(lua_request)
-        .await?;
-
-    let mut response = Response::builder().status(lua_status);
-    let headers = response
-        .headers_mut()
-        .ok_or_else(|| LuaError::external("response headers not set"))?;
-    lua_headers.for_each(|key: String, value: String| {
-        headers.append(
-            HeaderName::from_bytes(key.as_bytes())
-                .map_err(|_| LuaError::external(format!("invalid header name: {key}")))?,
-            value
-                .parse()
-                .map_err(|_| LuaError::external(format!("invalid header value: {value}")))?,
-        );
-        Ok(())
-    })?;
-
-    Ok(response
-        .body(Body::from(lua_body))
-        .map_err(|_| LuaError::external("error creating response body"))?)
+    Ok(res)
 }

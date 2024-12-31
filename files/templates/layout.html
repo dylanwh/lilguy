@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
+    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+    <link rel="manifest" href="/assets/site.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="/assets/android-chrome-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/assets/android-chrome-512x512.png">
+    <title>{% block title %}LilGuy - {{ page_title|default('Welcome') }}{% endblock %}</title>
+    <link rel="stylesheet" href="/assets/pico.css">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="container-fluid">
+        <ul>
+            <li><strong>LilGuy!!</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/">Home</a></li>
+            <li><a href="/about">About</a></li>
+            <li><a href="/docs">Docs</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container">
+        <small>
+            Built with <a href="https://github.com/dylanwh/lilguy">LilGuy</a>
+            {% block footer_extra %}{% endblock %}
+        </small>
+    </footer>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
+

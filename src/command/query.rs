@@ -11,7 +11,7 @@ pub struct Query {
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
     #[error("database error: {0}")]
-    Database(#[from] tokio_rusqlite::Error),
+    Database(#[from] database::Error),
 }
 
 impl Query {

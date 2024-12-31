@@ -17,12 +17,11 @@ minijinja = { version = "2.5.0", features = ["loader", "json", "preserve_order"]
 mlua = { version = "0.10.2", features = ["lua54", "serialize", "send", "async", "vendored"] }
 notify = { version = "7.0.0", features = ["serde", "crossbeam-channel"] }
 notify-debouncer-full = { version = "0.4.0", features = ["crossbeam-channel", "macos_kqueue", "serde"] }
-parking_lot = { version = "0.12.3", features = ["serde", "send_guard", "arc_lock"] }
+parking_lot = { version = "0.12.3", features = ["arc_lock", "owning_ref"] }
 path-tree = "0.8.2"
 prettytable-rs = "0.10.0"
-radix_trie = { version = "0.2.1", features = ["serde"] }
 regex = "1.11.1"
-rusqlite = { version = "0.32.1", features = ["serde_json"] }
+rusqlite = { version = "0.32.1", features = ["bundled", "serde_json"] }
 rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interpolate-folder-path", "tokio"] }
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["indexmap", "preserve_order"] }
@@ -31,12 +30,10 @@ serde_transmute = "0.1.4"
 strum = { version = "0.26.3", features = ["derive"] }
 thiserror = "2.0.9"
 tokio = { version = "1.42.0", features = ["full", "rt"] }
-tokio-rusqlite = { version = "0.6.0", features = ["bundled"] }
 tokio-util = { version = "0.7.13", features = ["io", "io-util", "rt"] }
-tower-http = { version = "0.6.2", features = ["fs"] }
+tower-http = { version = "0.6.2", features = ["fs", "trace"] }
 tracing = { version = "0.1.41", features = ["log", "async-await", "log-always"] }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-typed-builder = "0.20.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "parking_lot", "serde"] }
 walkdir = "2.5.0"
 
 [build-dependencies]
