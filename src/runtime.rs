@@ -1,25 +1,19 @@
+pub mod http;
+
 pub use mlua::prelude::*;
 use mlua::IntoLua;
 use parking_lot::Mutex;
-use std::{
-    path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     database::{global::Global, Database},
     routes::Routes,
-    template::{self, Template},
-    watch::{self, watch, MatchExtension, MatchParent, Matcher},
+    template::Template,
+    watch::{watch, MatchExtension, MatchParent},
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
-
-pub struct App {
-    database: Database,
-    routes: Routes,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -34,16 +28,17 @@ pub enum Error {
 
     #[error("database error: {0}")]
     Database(#[from] crate::database::Error),
+
+    #[error("reqwest error: {0}")]
+    Reqwest(#[from] reqwest::Error),
 }
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
     directory: PathBuf,
-
     lua: Arc<Mutex<Option<Lua>>>,
     services: Arc<Mutex<Option<Services>>>,
-
-    watching: Arc<AtomicBool>,
+    watch_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,28 +47,18 @@ struct Services {
     template: Template,
 }
 
+#[derive(Debug, Clone)]
+pub struct Options {
+    pub reload: bool,
+}
+
 impl Runtime {
     pub fn new(directory: PathBuf) -> Self {
-        let lua = Arc::new(Mutex::new(None));
-        let services = Arc::new(Mutex::new(None));
-
-        // let watcher = watch(
-        //     directory.clone(),
-        //     vec![
-        //         ("lua", Box::new(MatchExtension("lua".to_string()))),
-        //         (
-        //             "templates",
-        //             Box::new(MatchParent(directory.join("templates"))),
-        //         ),
-        //     ],
-        // ).await;
-        // let x = watcher.recv();
-
         Self {
             directory,
-            lua,
-            services,
-            watching: Arc::new(AtomicBool::new(false)),
+            lua: Arc::new(Mutex::new(None)),
+            services: Arc::new(Mutex::new(None)),
+            watch_token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -107,7 +92,7 @@ impl Runtime {
         Ok(lua)
     }
 
-    pub fn set_lua(&self, lua: Lua) {
+    fn set_lua(&self, lua: Lua) {
         self.lua.lock().replace(lua);
     }
 
@@ -121,21 +106,24 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn services(&self) -> Result<Services, Error> {
+    fn services(&self) -> Result<Services, Error> {
         self.services
             .lock()
             .clone()
             .ok_or_else(|| Error::ServicesNotStarted)
     }
 
-    pub async fn start_watcher(&self) {
-        if self.watching.load(std::sync::atomic::Ordering::Relaxed) {
-            tracing::info!("watcher already started");
-            return;
+    pub async fn start_watcher(&self) -> Result<(), Error> {
+        if self.watch_token.lock().is_some() {
+            return Ok(());
         }
         tracing::info!("starting watcher");
 
-        let (mut rx, guard) = watch(
+        let runtime = self.clone();
+        let template = runtime.services()?.template.clone();
+
+        let token = CancellationToken::new();
+        let mut rx = watch(
             self.directory.clone(),
             vec![
                 ("runtime", MatchExtension("lua".to_string()).into()),
@@ -144,19 +132,18 @@ impl Runtime {
                     MatchParent(self.directory.join("templates")).into(),
                 ),
             ],
+            token.clone(),
         )
         .await;
-
-        let runtime = self.clone();
-        let template = runtime.services().unwrap().template.clone();
+        self.watch_token.lock().replace(token);
 
         tokio::spawn(async move {
-            while let Some((name, changes)) = rx.recv().await {
+            while let Some((name, _changes)) = rx.recv().await {
                 tracing::info!("reload {name}");
                 match name {
                     "runtime" => {
                         tracing::info!("restarting runtime");
-                        runtime.restart().await.unwrap();
+                        runtime.restart_lua().await.unwrap();
                     }
                     "templates" => {
                         tracing::info!("reloading templates");
@@ -171,28 +158,31 @@ impl Runtime {
                     _ => {}
                 }
             }
-
-            drop(guard);
         });
 
-
         tracing::info!("watcher started");
-        self.watching
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        Ok(())
     }
 
-    pub async fn start(&self) -> Result<(), Error> {
-        self.start_services()?;
-        self.start_watcher().await;
-
+    pub async fn start_lua(&self) -> Result<(), Error> {
         let lua = self.new_lua().await?;
         self.set_lua(lua);
         Ok(())
     }
 
-    pub async fn restart(&self) -> Result<(), Error> {
+    pub async fn restart_lua(&self) -> Result<(), Error> {
         let lua = self.new_lua().await?;
         self.set_lua(lua);
+        Ok(())
+    }
+
+    pub async fn start(&self, options: Options) -> Result<(), Error> {
+        self.start_services()?;
+        if options.reload {
+            self.start_watcher().await?;
+        }
+        self.start_lua().await?;
         Ok(())
     }
 
@@ -203,14 +193,16 @@ impl Runtime {
         lua.load_std_libs(
             LuaStdLib::TABLE | LuaStdLib::STRING | LuaStdLib::UTF8 | LuaStdLib::MATH,
         )?;
+
         let globals = lua.globals();
         let package = globals.get::<LuaTable>("package")?;
         #[cfg(windows)]
         package.set("path", format!("?.lua"))?;
         #[cfg(not(windows))]
         package.set("path", self.directory.join("?.lua").to_string_lossy())?;
-        lua.load(LUA_PRELUDE).exec()?;
+
         globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
+        globals.set("timeout", lua.create_async_function(builtin_timeout)?)?;
 
         let json = lua.create_table()?;
         json.set("encode", lua.create_function(json_encode)?)?;
@@ -230,9 +222,45 @@ impl Runtime {
             Ok(())
         });
 
+        // lua already has warn, but let's add debug() and info() as well
+        // should work like print(foo, bar) == print(foo .. bar)
+        globals.set(
+            "debug",
+            lua.create_function(|_, args: LuaMultiValue| {
+                let mut buffer = String::new();
+                for arg in args {
+                    let arg = arg.to_string()?;
+                    buffer.push_str(&arg);
+                }
+                tracing::debug!("{buffer}");
+                Ok(())
+            })?,
+        )?;
+
+        globals.set(
+            "info",
+            lua.create_function(|_, args: LuaMultiValue| {
+                let mut buffer = String::new();
+                for arg in args {
+                    let arg = arg.to_string()?;
+                    buffer.push_str(&arg);
+                }
+                tracing::info!("{buffer}");
+                Ok(())
+            })?,
+        )?;
+
+        http::register(&lua)?;
+
+        lua.load(LUA_PRELUDE).exec()?;
+
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;
         Ok(lua)
+    }
+
+    pub fn database(&self) -> Result<Database, Error> {
+        Ok(self.services()?.database)
     }
 }
 
@@ -248,4 +276,17 @@ fn json_decode(lua: &Lua, value: String) -> LuaResult<LuaValue> {
 async fn builtin_sleep(_lua: Lua, seconds: f64) -> LuaResult<()> {
     tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
     Ok(())
+}
+
+/// timeout(seconds, function)
+async fn builtin_timeout(_lua: Lua, (seconds, func): (f64, LuaFunction)) -> LuaResult<()> {
+    let timeout = tokio::time::sleep(Duration::from_secs_f64(seconds));
+    tokio::select! {
+        _ = timeout => {
+            Err(LuaError::RuntimeError("timeout".to_string()))
+        }
+        _ = func.call_async::<()>(()) => {
+            Ok(())
+        }
+    }
 }

@@ -1,7 +1,7 @@
 use clap::Parser;
 
-use crate::runtime::Runtime;
 pub use crate::runtime::Error;
+use crate::runtime::{Options, Runtime};
 
 #[derive(Debug, Parser)]
 pub struct Run {
@@ -11,9 +11,9 @@ pub struct Run {
     /// additional arguments to pass to the script
     pub args: Vec<String>,
 }
-
 impl Run {
     pub async fn run(self, runtime: Runtime) -> Result<(), Error> {
+        runtime.start(Options { reload: false }).await?;
         runtime.run(self.name, self.args).await?;
 
         Ok(())

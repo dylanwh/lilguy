@@ -2,6 +2,8 @@ use clap::Parser;
 use prettytable::{Cell, Row};
 use rusqlite::types::Value;
 
+use crate::database::{self, Database};
+
 #[derive(Debug, Parser)]
 pub struct Query {
     /// sql query to run
@@ -9,19 +11,15 @@ pub struct Query {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum QueryError {
+pub enum Error {
     #[error("database error: {0}")]
     Database(#[from] database::Error),
 }
 
 impl Query {
-    pub async fn run<D>(self, database: D) -> Result<(), QueryError>
-    where
-        D: AsRef<tokio_rusqlite::Connection>,
-    {
+    pub async fn run(self, db: Database) -> Result<(), Error> {
         let query = self.query.clone();
-        database
-            .as_ref()
+        db
             .call(move |conn| {
                 let mut stmt = conn.prepare(&query)?;
                 let columns = stmt.column_count();

@@ -3,6 +3,11 @@ name = "lilguy"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+lto = true
+codegen-units = 1
+
 [dependencies]
 async-tempfile = "0.6.0"
 axum = "0.7.9"
@@ -13,6 +18,8 @@ crc32fast = "1.4.2"
 dotenv = { version = "0.15.0", features = ["clap"] }
 eyre = "0.6.12"
 grass = "0.13.4"
+http = "1.2.0"
+inquire = { version = "0.7.5", features = ["termion", "console"] }
 minijinja = { version = "2.5.0", features = ["loader", "json", "preserve_order"] }
 mlua = { version = "0.10.2", features = ["lua54", "serialize", "send", "async", "vendored"] }
 notify = { version = "7.0.0", features = ["serde", "crossbeam-channel"] }
@@ -21,8 +28,10 @@ parking_lot = { version = "0.12.3", features = ["arc_lock", "owning_ref"] }
 path-tree = "0.8.2"
 prettytable-rs = "0.10.0"
 regex = "1.11.1"
+reqwest = "0.12.12"
 rusqlite = { version = "0.32.1", features = ["bundled", "serde_json"] }
 rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interpolate-folder-path", "tokio"] }
+rustyline = "15.0.0"
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["indexmap", "preserve_order"] }
 serde_sqlite_jsonb = "0.1.0"

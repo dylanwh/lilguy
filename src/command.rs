@@ -1,11 +1,13 @@
 pub mod new;
-// pub mod query;
+pub mod query;
 // pub mod render;
-// pub mod run;
+pub mod run;
 pub mod serve;
 
 use crate::runtime::{self, Runtime};
 use clap::{Parser, Subcommand};
+use query::Query;
+use run::Run;
 use serve::Serve;
 use std::path::PathBuf;
 
@@ -50,6 +52,9 @@ pub enum CommandError {
 
     #[error("serve error: {0}")]
     Serve(#[from] serve::Error),
+
+    #[error("query error: {0}")]
+    Query(#[from] query::Error),
 }
 
 #[derive(Debug, Subcommand)]
@@ -57,9 +62,11 @@ pub enum Command {
     /// initialize a new project
     New(New),
 
-    // /// run sql queries
-    // #[clap(alias = "sql")]
-    // Query(Query),
+    #[clap(alias = "sql")]
+    Query(Query),
+
+    /// run a function
+    Run(Run),
 
     /// run the web server
     Serve(Serve),
@@ -76,6 +83,15 @@ impl Command {
             }
             Command::Serve(serve) => {
                 serve.run(runtime).await?;
+                Ok(())
+            }
+            Command::Run(run) => {
+                run.run(runtime).await?;
+                Ok(())
+            }
+            Command::Query(query) => {
+                runtime.start_services()?;
+                query.run(runtime.database()?).await?;
                 Ok(())
             }
         }

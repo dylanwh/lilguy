@@ -88,12 +88,14 @@ impl Matchers {
     }
 }
 
-pub async fn watch(directory: PathBuf, matchers: Vec<(&'static str, Box<dyn Matcher>)>) -> (Receiver<(&'static str, HashSet<PathBuf>)>, DropGuard) {
+pub async fn watch(
+    directory: PathBuf,
+    matchers: Vec<(&'static str, Box<dyn Matcher>)>,
+    token: CancellationToken,
+) -> Receiver<(&'static str, HashSet<PathBuf>)>  {
     let matchers = Matchers(matchers);
     let (tx, rx) = channel(5);
-    let token = CancellationToken::new();
 
-    let guard = token.clone().drop_guard();
     tokio::spawn(async move {
         let watch_directory = directory.clone();
 
@@ -122,7 +124,7 @@ pub async fn watch(directory: PathBuf, matchers: Vec<(&'static str, Box<dyn Matc
         tracing::info!("watcher stopped");
     });
 
-    ( rx, guard )
+    rx
 }
 
 type Changed = HashMap<&'static str, HashSet<PathBuf>>;
