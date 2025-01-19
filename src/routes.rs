@@ -2,11 +2,6 @@ use mlua::prelude::*;
 use path_tree::PathTree;
 use std::ops::{Deref, DerefMut};
 
-const ROUTE_FUNCTION: &str = "func";
-const ROUTE_PARAMS: &str = "params";
-const ROUTE_PATTERN: &str = "pattern";
-const ROUTE_MT: &str = "route_mt";
-
 #[derive(Debug, Default)]
 pub struct Routes(PathTree<LuaFunction>);
 
@@ -42,11 +37,9 @@ impl LuaUserData for Routes {
                     let pattern = lua.create_string(path.pattern())?;
                     let params = lua.create_table_from(path.params_iter())?;
                     let route = lua.create_table()?;
-                    route.set(ROUTE_FUNCTION, func)?;
-                    route.set(ROUTE_PARAMS, params)?;
-                    route.set(ROUTE_PATTERN, pattern)?;
-                    let route_mt = lua.named_registry_value::<LuaTable>(ROUTE_MT)?;
-                    route.set_metatable(Some(route_mt));
+                    route.set("func", func)?;
+                    route.set("params", params)?;
+                    route.set("pattern", pattern)?;
 
                     Ok(LuaValue::Table(route))
                 }

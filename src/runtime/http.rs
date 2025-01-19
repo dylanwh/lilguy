@@ -1,28 +1,36 @@
-use std::{char::MAX, ops::Deref};
+use std::ops::Deref;
 
 use axum::{
     body::{to_bytes, Body},
-    http::{HeaderMap, HeaderName, HeaderValue, Response},
-    response::IntoResponse,
+    http::{HeaderMap, HeaderName, HeaderValue},
 };
 use bytes::Bytes;
-use http::{version, Request};
+use http::Request;
 use mlua::prelude::*;
-use reqwest::{Method, RequestBuilder, StatusCode};
-use tokio_util::codec::Decoder;
+use reqwest::{Method, RequestBuilder};
+
+const FETCH_CLIENT: &str = "fetch_client";
+const REQUEST_MT: &str = "request_mt";
+const RESPONSE_MT: &str = "response_mt";
 
 pub fn register(lua: &Lua) -> Result<(), super::Error> {
+    let globals = lua.globals();
+
     let client = reqwest::Client::builder()
         .user_agent(format!("lilguy/{}", env!("CARGO_PKG_VERSION")))
         .build()?;
     let fetch_client = FetchClient::from(client);
-    lua.set_named_registry_value("fetch_client", fetch_client)?;
+    lua.set_named_registry_value(FETCH_CLIENT, fetch_client)?;
 
-    let globals = lua.globals();
-    globals.set(
-        "fetch_client",
-        lua.named_registry_value::<LuaValue>("fetch_client")?,
-    )?;
+    let request_mt = lua.create_table()?;
+    request_mt.set("__index", globals.get::<Option<LuaTable>>("Request")?)?;
+
+    let response_mt = lua.create_table()?;
+    response_mt.set("__index", globals.get::<Option<LuaTable>>("Response")?)?;
+
+    lua.set_named_registry_value(REQUEST_MT, request_mt)?;
+    lua.set_named_registry_value(RESPONSE_MT, response_mt)?;
+
     globals.set("fetch", lua.create_async_function(fetch)?)?;
 
     Ok(())
@@ -116,6 +124,12 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
     let (parts, body) = request.into_parts();
     let req = lua.create_table()?;
     let method = parts.method.as_str();
+    let content_type = parts
+        .headers
+        .get("content-type")
+        .map(|v| v.to_str().unwrap_or(""))
+        .unwrap_or("")
+        .to_owned();
     let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
     let body = to_bytes(body, 1024 * 1024 * 16)
         .await
@@ -123,7 +137,21 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
 
     req.set("method", method)?;
     req.set("headers", headers)?;
-    req.set("body", lua.create_string(&body)?)?;
+    req.set("path", parts.uri.path())?;
+    let query: serde_json::Map<String, serde_json::Value> =
+        serde_qs::from_str(parts.uri.query().unwrap_or("")).map_err(LuaError::external)?;
+    req.set("query", lua.to_value(&query)?)?;
+
+    match content_type.as_str() {
+        "application/x-www-form-urlencoded" => {
+            let body: serde_json::Value =
+                serde_urlencoded::from_bytes(&body).map_err(LuaError::external)?;
+            req.set("body", lua.to_value(&body)?)
+        }
+        _ => req.set("body", lua.create_string(&body)?),
+    }?;
+
+    req.set_metatable(lua.named_registry_value::<LuaTable>(REQUEST_MT)?.into());
 
     // set request metatable that prevents new fields or modifying the headers field
     // req.set_metatable(lua.named_registry_value::<LuaTable>("request_mt")?.into());
@@ -137,10 +165,14 @@ pub fn new_response(lua: &Lua) -> Result<LuaTable, LuaError> {
     res.set("status", 200)?;
     res.set("headers", headers)?;
     res.set("body", "")?;
+    res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into());
     Ok(res)
 }
 
-async fn create_fetch_response(lua: &Lua, response: reqwest::Response) -> Result<LuaTable, LuaError> {
+async fn create_fetch_response(
+    lua: &Lua,
+    response: reqwest::Response,
+) -> Result<LuaTable, LuaError> {
     let response = axum::http::Response::from(response);
     let (parts, body) = response.into_parts();
     let body = Body::from(Bytes::copy_from_slice(body.as_bytes().unwrap_or_default()));
@@ -149,7 +181,10 @@ async fn create_fetch_response(lua: &Lua, response: reqwest::Response) -> Result
     create_response(lua, response).await
 }
 
-pub async fn create_response(lua: &Lua, response: axum::http::Response<Body>) -> Result<LuaTable, LuaError> {
+pub async fn create_response(
+    lua: &Lua,
+    response: axum::http::Response<Body>,
+) -> Result<LuaTable, LuaError> {
     let (parts, body) = response.into_parts();
     let res = lua.create_table()?;
     let status = parts.status.as_u16();
@@ -161,6 +196,7 @@ pub async fn create_response(lua: &Lua, response: axum::http::Response<Body>) ->
     res.set("status", status)?;
     res.set("headers", headers)?;
     res.set("body", lua.create_string(&body)?)?;
+    res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into());
 
     // set response metatable that prevents new fields or modifying the headers field
     // res.set_metatable(lua.named_registry_value::<LuaTable>("response_mt")?.into());

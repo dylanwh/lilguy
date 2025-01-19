@@ -1,11 +1,3 @@
-use std::{
-    any::Any,
-    collections::HashMap,
-    io::Read,
-    ops::Deref,
-    sync::{Arc, Weak},
-};
-
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -14,12 +6,13 @@ use axum::{
     routing::any,
     Router,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use clap::Parser;
 use mlua::prelude::*;
+use std::time::Duration;
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
 use tower_http::trace::{self, TraceLayer};
+use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 use tracing::Level;
 
 use crate::{
@@ -31,6 +24,8 @@ use crate::{
     },
 };
 
+use super::Context ;
+
 #[derive(Debug, Parser)]
 pub struct Serve {
     /// the address to bind to
@@ -40,6 +35,9 @@ pub struct Serve {
     /// do not reload the server when files change
     #[clap(long)]
     pub no_reload: bool,
+
+    #[clap(long)]
+    pub silent: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,13 +50,19 @@ pub enum Error {
 }
 
 impl Serve {
-    pub async fn run(self, runtime: Runtime) -> Result<(), Error> {
+    #[tracing::instrument(level = "debug")]
+    pub async fn run(
+        self,
+        context: &Context,
+        runtime: Runtime,
+    ) -> Result<(), Error> {
+        let tracker = context.tracker.clone();
+        let token = context.token.clone();
         let listener = TcpListener::bind(&self.listen).await?;
-        runtime
-            .start(Options {
-                reload: !self.no_reload,
-            })
-            .await?;
+        let options = Options {
+            reload: !self.no_reload,
+        };
+        runtime.start(options).await?;
 
         let assets_dir = runtime.assets_dir();
 
@@ -72,9 +76,27 @@ impl Serve {
                     .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
                     .on_request(trace::DefaultOnRequest::new().level(Level::INFO))
                     .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
-            );
+            )
+            .layer(TimeoutLayer::new(Duration::from_secs(60)));
 
-        axum::serve(listener, app).await?;
+        tracker.spawn(async move {
+            let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+                token.cancelled().await;
+            });
+            if let Err(err) = server.await {
+                tracing::error!(?err, "error serving application");
+            }
+        });
+
+        // wait a tick to ensure the server is up
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let url = format!("http://{}", self.listen);
+        let url = url.replace("http://0.0.0.0", "http://127.0.0.1");
+
+        if !self.silent {
+            println!("listening on {url}");
+        }
+
 
         Ok(())
     }
@@ -149,8 +171,7 @@ impl IntoResponse for LuaResponse {
             .and_then(|headers| headers.take::<LuaHeaders>())
             .map(|headers| headers.into_inner())
             .ok();
-        self
-            .table
+        self.table
             .get::<LuaString>("body")
             .map(|body| Bytes::from(body.as_bytes().to_vec()))
             .map(|body| {

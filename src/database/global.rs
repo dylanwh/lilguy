@@ -2,7 +2,10 @@ use super::Database;
 use mlua::prelude::*;
 use rusqlite::{params, OptionalExtension, Row, ToSql};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::{
+    sync::mpsc::{self, Receiver},
+    task::block_in_place,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GlobalTableError {
@@ -112,13 +115,12 @@ impl GlobalTable {
         format!("\"lg_global_{}\"", self.name.replace("\"", "\"\""))
     }
 
-    pub async fn create(&self) -> Result<(), super::Error> {
+    pub fn create(&self) -> Result<(), super::Error> {
         let sql_name = self.sql_name();
-        self.database
-            .call(move |conn| {
-                conn.execute(
-                    &format!(
-                        r"
+        self.database.blocking_call(move |conn| {
+            conn.execute(
+                &format!(
+                    r"
                             CREATE TABLE IF NOT EXISTS {sql_name} (
                                 key_int INTEGER UNIQUE,
                                 key_str TEXT UNIQUE,
@@ -127,13 +129,12 @@ impl GlobalTable {
                                 CHECK ((key_int IS NULL) != (key_str IS NULL))
                             )
                         "
-                    ),
-                    [],
-                )?;
+                ),
+                [],
+            )?;
 
-                Ok(())
-            })
-            .await?;
+            Ok(())
+        })?;
 
         Ok(())
     }
@@ -260,7 +261,7 @@ impl GlobalTable {
         GlobalTablePairs(rx)
     }
 
-    pub async fn drop(&self) -> Result<(), super::Error> {
+    pub async fn destroy(&self) -> Result<(), super::Error> {
         let sql_name = self.sql_name();
         self.database
             .call(move |conn| {
@@ -338,16 +339,18 @@ pub struct Global {
 
 impl Global {
     pub fn new(database: &Database) -> Self {
-        Self { database: database.clone() }
+        Self {
+            database: database.clone(),
+        }
     }
 }
 
 // global.name creates a new GlobalTable
 impl LuaUserData for Global {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_meta_method(LuaMetaMethod::Index, |_lua, this, key: String| async move {
+        methods.add_meta_method(LuaMetaMethod::Index, |_lua, this, key: String| {
             let table = GlobalTable::new(key, this.database.clone());
-            table.create().await.map_err(LuaError::external)?;
+            block_in_place(|| table.create().map_err(LuaError::external))?;
             Ok(table)
         });
 
@@ -357,7 +360,7 @@ impl LuaUserData for Global {
             |_, this, (key, value): (String, LuaValue)| async move {
                 if value.is_nil() {
                     let table = GlobalTable::new(key, this.database.clone());
-                    table.drop().await.map_err(LuaError::external)?;
+                    table.destroy().await.map_err(LuaError::external)?;
                     return Ok(());
                 }
                 Err(LuaError::external("cannot set value on global"))

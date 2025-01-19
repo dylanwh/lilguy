@@ -1,10 +1,11 @@
+#![allow(unused)]
 // this was initially copied from tokio-rusqlite and modified to fit the needs of this project
 pub mod global;
 
+use mlua::prelude::*;
 use std::{path::Path, thread};
 use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot::{self};
-use mlua::prelude::*;
 
 const BUG_TEXT: &str = "bug in lilguy::database";
 
@@ -97,6 +98,25 @@ impl Database {
         receiver.await.map_err(|_| Error::ConnectionClosed)?
     }
 
+    pub fn blocking_call<F, R>(&self, function: F) -> Result<R>
+    where
+        F: FnOnce(&mut rusqlite::Connection) -> Result<R> + 'static + Send,
+        R: Send + 'static,
+    {
+        let (sender, receiver) = oneshot::channel::<Result<R>>();
+
+        self.sender
+            .send(Message::Execute(Box::new(move |conn| {
+                let value = function(conn);
+                let _ = sender.send(value);
+            })))
+            .map_err(|_| Error::ConnectionClosed)?;
+
+        receiver
+            .blocking_recv()
+            .map_err(|_| Error::ConnectionClosed)?
+    }
+
     /// Close the database connection.
     ///
     /// This is functionally equivalent to the `Drop` implementation for
@@ -121,8 +141,8 @@ impl Database {
         match receiver.await {
             // If we get a RecvError at this point, it also means the channel closed in the meantime
             // we can assume the connection is closed
-            Err(_) => return Ok(()),
-            Ok(Err(e)) => return Err(Error::Close(self, e)),
+            Err(_) => Ok(()),
+            Ok(Err(e)) => Err(Error::Close(self, e)),
             Ok(Ok(v)) => Ok(v),
         }
     }
@@ -188,6 +208,4 @@ fn event_loop(mut conn: rusqlite::Connection, mut receiver: UnboundedReceiver<Me
     }
 }
 
-impl LuaUserData for Database {
-
-}
+impl LuaUserData for Database {}

@@ -27,12 +27,32 @@ end
 
 commands = {}
 
-function serve(req)
-    local route = routes[req.path]
-    local response = { status = 200, headers = {}, body = "" }
+function not_found(req, res)
+    res.status = 404
+    res.body = string.format("Not found: %s", req.path)
 end
 
-local body_mt = {}
-function body_mt:__tostring()
-    return self.body
+Response = {}
+
+function Response:render(name, context)
+    local body = template:render(name, context)
+    if body then
+        if self.headers["Content-Type"] == nil then
+            self.headers["Content-Type"] = "text/html"
+        end
+        self.body = body
+    else
+        self.status = 500
+        self.body = "Error rendering template"
+    end
+end
+
+function Response:redirect(url)
+    self.status = 302
+    self.headers["Location"] = url
+end
+
+function Response:json(data)
+    self.headers["Content-Type"] = "application/json"
+    self.body = json.encode(data)
 end

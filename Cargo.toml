@@ -14,19 +14,27 @@ axum = "0.7.9"
 base64 = "0.22.1"
 bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive", "env"] }
+colored_json = "5.0.0"
+comrak = { version = "0.32.0", features = ["emojis", "shortcodes"] }
 crc32fast = "1.4.2"
+dirs = "5.0.1"
 dotenv = { version = "0.15.0", features = ["clap"] }
 eyre = "0.6.12"
 grass = "0.13.4"
 http = "1.2.0"
-inquire = { version = "0.7.5", features = ["termion", "console"] }
+ignore = "0.4.23"
+indexmap = { version = "2.7.0", features = ["serde"] }
+inquire = { version = "0.7.5", features = ["console"] }
 minijinja = { version = "2.5.0", features = ["loader", "json", "preserve_order"] }
 mlua = { version = "0.10.2", features = ["lua54", "serialize", "send", "async", "vendored"] }
 notify = { version = "7.0.0", features = ["serde", "crossbeam-channel"] }
 notify-debouncer-full = { version = "0.4.0", features = ["crossbeam-channel", "macos_kqueue", "serde"] }
+nu-ansi-term = { version = "0.50.1", features = ["derive_serde_style", "serde"] }
+open = "5.3.1"
 parking_lot = { version = "0.12.3", features = ["arc_lock", "owning_ref"] }
 path-tree = "0.8.2"
 prettytable-rs = "0.10.0"
+reedline = { version = "0.38.0", features = ["external_printer"] }
 regex = "1.11.1"
 reqwest = "0.12.12"
 rusqlite = { version = "0.32.1", features = ["bundled", "serde_json"] }
@@ -34,15 +42,22 @@ rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interp
 rustyline = "15.0.0"
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["indexmap", "preserve_order"] }
+serde_qs = { version = "0.13.0", features = ["axum"] }
 serde_sqlite_jsonb = "0.1.0"
 serde_transmute = "0.1.4"
+serde_urlencoded = "0.7.1"
 strum = { version = "0.26.3", features = ["derive"] }
 thiserror = "2.0.9"
 tokio = { version = "1.42.0", features = ["full", "rt"] }
 tokio-util = { version = "0.7.13", features = ["io", "io-util", "rt"] }
-tower-http = { version = "0.6.2", features = ["fs", "trace"] }
+toml = { version = "0.8.19", features = ["indexmap", "preserve_order"] }
+toml_edit = { version = "0.22.22", features = ["serde"] }
+tower-http = { version = "0.6.2", features = ["fs", "timeout", "trace"] }
 tracing = { version = "0.1.41", features = ["log", "async-await", "log-always"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "parking_lot", "serde"] }
+tree-sitter = "0.24.6"
+tree-sitter-highlight = "0.24.6"
+tree-sitter-lua = "0.2.0"
 walkdir = "2.5.0"
 
 [build-dependencies]

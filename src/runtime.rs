@@ -1,16 +1,21 @@
 pub mod http;
+pub mod dump;
 
 pub use mlua::prelude::*;
 use mlua::IntoLua;
 use parking_lot::Mutex;
-use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio_util::sync::CancellationToken;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
-    database::{global::Global, Database},
-    routes::Routes,
-    template::Template,
-    watch::{watch, MatchExtension, MatchParent},
+    command::Context, database::{global::Global, Database}, routes::Routes, template::Template, watch::{watch, Match}
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
@@ -35,10 +40,12 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
+    token: CancellationToken,
+    tracker: TaskTracker,
     directory: PathBuf,
     lua: Arc<Mutex<Option<Lua>>>,
     services: Arc<Mutex<Option<Services>>>,
-    watch_token: Arc<Mutex<Option<CancellationToken>>>,
+    started: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,12 +60,14 @@ pub struct Options {
 }
 
 impl Runtime {
-    pub fn new(directory: PathBuf) -> Self {
+    pub fn new(context: &Context) -> Self {
         Self {
-            directory,
+            token: context.token.clone(),
+            tracker: context.tracker.clone(),
+            directory: context.directory.clone(),
             lua: Arc::new(Mutex::new(None)),
             services: Arc::new(Mutex::new(None)),
-            watch_token: Arc::new(Mutex::new(None)),
+            started: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -92,10 +101,12 @@ impl Runtime {
         Ok(lua)
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     fn set_lua(&self, lua: Lua) {
         self.lua.lock().replace(lua);
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     pub fn start_services(&self) -> Result<(), Error> {
         let mut services = self.services.lock();
         if services.is_none() {
@@ -103,6 +114,7 @@ impl Runtime {
             let template = Template::new(self.directory.join("templates"));
             services.replace(Services { database, template });
         }
+
         Ok(())
     }
 
@@ -113,80 +125,102 @@ impl Runtime {
             .ok_or_else(|| Error::ServicesNotStarted)
     }
 
-    pub async fn start_watcher(&self) -> Result<(), Error> {
-        if self.watch_token.lock().is_some() {
-            return Ok(());
-        }
-        tracing::info!("starting watcher");
-
+    #[tracing::instrument(level = "debug", skip(self))]
+    async fn start_watcher(&self) -> Result<(), Error> {
         let runtime = self.clone();
         let template = runtime.services()?.template.clone();
 
-        let token = CancellationToken::new();
         let mut rx = watch(
+            self.token.clone(),
+            self.tracker.clone(),
             self.directory.clone(),
             vec![
-                ("runtime", MatchExtension("lua".to_string()).into()),
-                (
-                    "templates",
-                    MatchParent(self.directory.join("templates")).into(),
-                ),
+                ("runtime", Match::Extension("lua".to_string())),
+                ("templates", Match::Parent(self.directory.join("templates"))),
             ],
-            token.clone(),
         )
         .await;
-        self.watch_token.lock().replace(token);
 
-        tokio::spawn(async move {
+        self.tracker.spawn(async move {
             while let Some((name, _changes)) = rx.recv().await {
-                tracing::info!("reload {name}");
+                tracing::debug!("reload {name}");
                 match name {
                     "runtime" => {
                         tracing::info!("restarting runtime");
-                        runtime.restart_lua().await.unwrap();
+                        if let Err(err) = runtime.restart_lua().await {
+                            tracing::error!(?err, "error restarting runtime");
+                        }
                     }
                     "templates" => {
                         tracing::info!("reloading templates");
-                        template
+                        if let Err(err) = template
                             .call(|env| {
                                 env.clear_templates();
                                 Ok(())
                             })
                             .await
-                            .unwrap();
+                        {
+                            tracing::error!(?err, "error reloading templates");
+                        }
                     }
                     _ => {}
                 }
             }
         });
 
-        tracing::info!("watcher started");
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    async fn start_lua(&self) -> Result<(), Error> {
+        let lua = self.new_lua().await?;
+        self.set_lua(lua);
+
+        let runtime = self.clone();
+        let token = self.token.clone();
+        self.tracker.spawn(async move {
+            token.cancelled().await;
+            if let Err(err) = runtime.shutdown().await {
+                tracing::error!(?err, "error calling on_shutdown");
+            }
+        });
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub async fn shutdown(&self) -> Result<(), Error> {
+        let lua = self.lua()?;
+        let globals = lua.globals();
+        if let Some(on_shutdown) = globals.get::<Option<LuaFunction>>("on_shutdown")? {
+            on_shutdown.call_async::<()>(()).await?;
+        }
 
         Ok(())
     }
 
-    pub async fn start_lua(&self) -> Result<(), Error> {
+    #[tracing::instrument(level = "debug", skip(self))]
+    async fn restart_lua(&self) -> Result<(), Error> {
         let lua = self.new_lua().await?;
         self.set_lua(lua);
         Ok(())
     }
 
-    pub async fn restart_lua(&self) -> Result<(), Error> {
-        let lua = self.new_lua().await?;
-        self.set_lua(lua);
-        Ok(())
-    }
-
+    #[tracing::instrument(level = "debug", skip(self))]
     pub async fn start(&self, options: Options) -> Result<(), Error> {
+        if self.started.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         self.start_services()?;
         if options.reload {
             self.start_watcher().await?;
         }
         self.start_lua().await?;
+        self.started.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     #[allow(dependency_on_unit_never_type_fallback)]
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn new_lua(&self) -> Result<Lua, Error> {
         let services = self.services()?;
         let lua = Lua::new();
@@ -203,6 +237,7 @@ impl Runtime {
 
         globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
         globals.set("timeout", lua.create_async_function(builtin_timeout)?)?;
+        globals.set("markdown", lua.create_function(builtin_markdown)?)?;
 
         let json = lua.create_table()?;
         json.set("encode", lua.create_function(json_encode)?)?;
@@ -250,9 +285,9 @@ impl Runtime {
             })?,
         )?;
 
-        http::register(&lua)?;
-
         lua.load(LUA_PRELUDE).exec()?;
+
+        http::register(&lua)?;
 
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;
@@ -261,6 +296,15 @@ impl Runtime {
 
     pub fn database(&self) -> Result<Database, Error> {
         Ok(self.services()?.database)
+    }
+    
+    pub async fn eval<S>(&self, line: S) -> Result<LuaMultiValue, Error>
+    where
+        S: AsRef<str>,
+    {
+        let lua = self.lua()?;
+        let multi = lua.load(line.as_ref()).eval_async().await?;
+        Ok(multi)
     }
 }
 
@@ -289,4 +333,8 @@ async fn builtin_timeout(_lua: Lua, (seconds, func): (f64, LuaFunction)) -> LuaR
             Ok(())
         }
     }
+}
+
+fn builtin_markdown(_lua: &Lua, value: String) -> LuaResult<String> {
+    Ok(comrak::markdown_to_html(&value, &comrak::ComrakOptions::default()))
 }

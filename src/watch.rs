@@ -1,19 +1,18 @@
+use ignore::Walk;
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventHandler, DebounceEventResult};
-use regex::{Match, Regex};
 use std::{
     collections::{HashMap, HashSet},
     io,
-    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     time::Duration,
 };
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
-    task::block_in_place,
+    task::spawn_blocking,
 };
-use tokio_util::sync::{CancellationToken, DropGuard};
-use walkdir::WalkDir;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::Instrument;
 
 struct EventHandler {
     checksums: HashMap<&'static str, HashMap<PathBuf, u32>>,
@@ -29,54 +28,28 @@ pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 
-    #[error("walkdir error: {0}")]
-    WalkDir(#[from] walkdir::Error),
-
-    #[error("send error")]
-    Send,
+    #[error("error scanning files: {0}")]
+    Ignore(#[from] ignore::Error),
 }
 
-pub trait Matcher: Send + Sync + 'static {
-    fn is_match(&self, path: &Path) -> bool;
+#[derive(Debug)]
+pub enum Match {
+    Parent(PathBuf),
+    Extension(String),
 }
-
-impl Matcher for Regex {
+impl Match {
     fn is_match(&self, path: &Path) -> bool {
-        self.is_match(path.to_str().expect("path to str"))
+        match self {
+            Match::Parent(parent) => path.starts_with(parent),
+            Match::Extension(ext) => path.extension().map_or(false, |e| e == ext.as_str()),
+        }
     }
 }
 
-pub struct MatchParent(pub PathBuf);
-pub struct MatchExtension(pub String);
-
-impl Matcher for MatchParent {
-    fn is_match(&self, path: &Path) -> bool {
-        path.starts_with(&self.0)
-    }
-}
-
-impl Matcher for MatchExtension {
-    fn is_match(&self, path: &Path) -> bool {
-        path.extension().map_or(false, |ext| ext == self.0.as_str())
-    }
-}
-
-impl From<MatchParent> for Box<dyn Matcher> {
-    fn from(parent: MatchParent) -> Self {
-        Box::new(parent)
-    }
-}
-
-impl From<MatchExtension> for Box<dyn Matcher> {
-    fn from(ext: MatchExtension) -> Self {
-        Box::new(ext)
-    }
-}
-
-pub struct Matchers(Vec<(&'static str, Box<dyn Matcher>)>);
+pub struct Matchers(Vec<(&'static str, Match)>);
 
 impl Matchers {
-    fn find(&self, path: &Path) -> Option<(&'static str, &Box<dyn Matcher>)> {
+    fn find(&self, path: &Path) -> Option<(&'static str, &Match)> {
         self.0
             .iter()
             .map(|(n, r)| (*n, r))
@@ -88,41 +61,49 @@ impl Matchers {
     }
 }
 
+#[tracing::instrument(level = "debug", skip(token))]
 pub async fn watch(
-    directory: PathBuf,
-    matchers: Vec<(&'static str, Box<dyn Matcher>)>,
     token: CancellationToken,
-) -> Receiver<(&'static str, HashSet<PathBuf>)>  {
+    tracker: TaskTracker,
+    directory: PathBuf,
+    matchers: Vec<(&'static str, Match)>,
+) -> Receiver<(&'static str, HashSet<PathBuf>)> {
     let matchers = Matchers(matchers);
     let (tx, rx) = channel(5);
 
-    tokio::spawn(async move {
-        let watch_directory = directory.clone();
+    tracker.spawn(
+        async move {
+            let watch_directory = directory.clone();
 
-        let debouncer = block_in_place(move || {
-            let checksums = initial_checksums(&matchers, directory).expect("initial checksums");
-            let mut debouncer = new_debouncer(
-                Duration::from_secs(2),
-                None,
-                EventHandler {
-                    checksums,
-                    matchers,
-                    tx,
-                },
-            )
-            .unwrap();
-            debouncer
-                .watch(watch_directory, RecursiveMode::Recursive)
-                .unwrap();
+            let debouncer = spawn_blocking(move || {
+                {
+                    let checksums =
+                        initial_checksums(&matchers, directory).expect("initial checksums");
+                    let mut debouncer = new_debouncer(
+                        Duration::from_secs(2),
+                        None,
+                        EventHandler {
+                            checksums,
+                            matchers,
+                            tx,
+                        },
+                    )
+                    .expect("new debouncer");
+                    debouncer
+                        .watch(watch_directory, RecursiveMode::Recursive)
+                        .expect("watch");
 
-            debouncer
-        });
+                    debouncer
+                }
+            }).await.expect("spawn_blocking");
 
-        tracing::info!("watcher started");
-        token.cancelled().await;
-        drop(debouncer);
-        tracing::info!("watcher stopped");
-    });
+            tracing::debug!("watching files, will reload on change");
+            token.cancelled().await;
+            drop(debouncer);
+            tracing::debug!("no longer watching files");
+        }
+        .instrument(tracing::debug_span!("watcher task")),
+    );
 
     rx
 }
@@ -131,14 +112,17 @@ type Changed = HashMap<&'static str, HashSet<PathBuf>>;
 
 type Checksums = HashMap<&'static str, HashMap<PathBuf, u32>>;
 
+#[tracing::instrument(level = "debug", skip(matcher))]
 fn initial_checksums(matcher: &Matchers, directory: PathBuf) -> Result<Checksums, Error> {
     let mut checksums = Checksums::new();
 
-    for entry in WalkDir::new(&directory).into_iter() {
+    let mut count: usize = 0;
+    for entry in Walk::new(&directory) {
+        count += 1;
         let entry = entry?;
         let path = entry.path();
 
-        if !entry.file_type().is_file() {
+        if matches!(entry.file_type(), Some(file_type) if !file_type.is_file()) {
             continue;
         }
         if let Some(name) = matcher.find_name(path) {
@@ -150,9 +134,12 @@ fn initial_checksums(matcher: &Matchers, directory: PathBuf) -> Result<Checksums
         }
     }
 
+    tracing::debug!(count, "watcher checked files");
+
     Ok(checksums)
 }
 
+#[tracing::instrument(level = "error")]
 fn report_errors(errors: Vec<notify::Error>) {
     for error in errors {
         tracing::error!(?error, "error watching files");
@@ -160,6 +147,7 @@ fn report_errors(errors: Vec<notify::Error>) {
 }
 
 impl DebounceEventHandler for EventHandler {
+    #[tracing::instrument(level = "debug", skip(self, event))]
     fn handle_event(&mut self, event: DebounceEventResult) {
         match event {
             Ok(events) => {
@@ -194,6 +182,7 @@ impl DebounceEventHandler for EventHandler {
     }
 }
 
+#[tracing::instrument(level = "debug")]
 fn checksum_file(path: &Path) -> Result<u32, io::Error> {
     let contents = std::fs::read(path)?;
     let mut hasher = crc32fast::Hasher::new();

@@ -56,9 +56,7 @@ impl Template {
             })))
             .map_err(|_| Error::ConnectionClosed)?;
 
-        receiver
-            .await
-            .map_err(|_| Error::ConnectionClosed)?
+        receiver.await.map_err(|_| Error::ConnectionClosed)?
     }
 }
 
@@ -82,7 +80,7 @@ impl LuaUserData for Template {
                     Ok(rendered)
                 })
                 .await
-                .map_err(|e| mlua::Error::external(e))
+                .map_err(mlua::Error::external)
             },
         );
     }
