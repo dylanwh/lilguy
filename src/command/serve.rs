@@ -8,6 +8,7 @@ use axum::{
 };
 use bytes::Bytes;
 use clap::Parser;
+use eyre::Result;
 use mlua::prelude::*;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -16,6 +17,8 @@ use tower_http::{services::ServeDir, timeout::TimeoutLayer};
 use tracing::Level;
 
 use crate::{
+    command::Context,
+    repl::Repl,
     routes::Routes,
     runtime::{
         self,
@@ -23,8 +26,6 @@ use crate::{
         Options, Runtime,
     },
 };
-
-use super::Context ;
 
 #[derive(Debug, Parser)]
 pub struct Serve {
@@ -38,24 +39,17 @@ pub struct Serve {
 
     #[clap(long)]
     pub silent: bool,
-}
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
+    #[clap(short, long)]
+    pub open: bool,
 
-    #[error("runtime error: {0}")]
-    Runtime(#[from] runtime::Error),
+    #[clap(short, long)]
+    pub interactive: bool,
 }
 
 impl Serve {
     #[tracing::instrument(level = "debug")]
-    pub async fn run(
-        self,
-        context: &Context,
-        runtime: Runtime,
-    ) -> Result<(), Error> {
+    pub async fn run(self, context: &Context, runtime: Runtime) -> Result<()> {
         let tracker = context.tracker.clone();
         let token = context.token.clone();
         let listener = TcpListener::bind(&self.listen).await?;
@@ -70,7 +64,7 @@ impl Serve {
             .nest_service("/assets", ServeDir::new(assets_dir))
             .route("/", any(handle_request))
             .route("/*path", any(handle_request))
-            .with_state(runtime)
+            .with_state(runtime.clone())
             .layer(
                 TraceLayer::new_for_http()
                     .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
@@ -97,6 +91,20 @@ impl Serve {
             println!("listening on {url}");
         }
 
+        if self.open {
+            open::that(url)?;
+        }
+
+        if self.interactive {
+            let repl = Repl {
+                token: context.token.clone(),
+                tracker: context.tracker.clone(),
+                lua: runtime.lua()?,
+                config: context.config.clone(),
+                output: context.output.clone(),
+            };
+            repl.start().await?;
+        }
 
         Ok(())
     }

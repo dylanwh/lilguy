@@ -2,6 +2,7 @@ mod command;
 mod database;
 mod routes;
 mod runtime;
+mod repl;
 mod template;
 mod watch;
 
@@ -16,7 +17,7 @@ use std::{
 use tokio::time::sleep;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing_subscriber::{
-    fmt::{format::FmtSpan, MakeWriter},
+    fmt::MakeWriter,
     EnvFilter,
 };
 
@@ -100,9 +101,9 @@ async fn main() -> Result<(), eyre::Report> {
         }
     });
 
-    let res = args.run(token, tracker, output).await;
+    
 
-    Ok(res?)
+    args.run(token, tracker, output).await
 }
 
 /// Ignore `NotFound` errors from `dotenv::dotenv()`.
@@ -133,7 +134,7 @@ fn init_tracing_subscriber(output: Output) {
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
-        .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
+        // .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
         .with_env_filter(filter)
         .with_ansi(is_terminal)
         .compact()

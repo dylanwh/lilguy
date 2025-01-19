@@ -1,11 +1,12 @@
 // pub mod render;
-pub mod new;
-pub mod query;
-pub mod run;
-pub mod serve;
-pub mod shell;
+mod new;
+mod query;
+mod run;
+mod serve;
+mod shell;
 
 use clap::{Parser, Subcommand};
+use eyre::Result;
 use serde::{Deserialize, Serialize};
 use shell::Shell;
 use std::{path::PathBuf, sync::Arc};
@@ -13,8 +14,8 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::Output;
 
-use super::runtime::{self, Runtime};
-use new::{New, NewError};
+use super::runtime::Runtime;
+use new::New;
 use query::Query;
 use run::Run;
 use serve::Serve;
@@ -40,7 +41,7 @@ pub struct Args {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
-    pub shell: shell::Config,
+    pub shell: crate::repl::Config,
 }
 
 impl Args {
@@ -57,7 +58,7 @@ impl Args {
             .expect("could not determine config path")
     }
 
-    async fn read_config(&self) -> Result<Config, CommandError> {
+    async fn read_config(&self) -> Result<Config> {
         let config_path = self.config_path();
         match tokio::fs::read_to_string(&config_path).await {
             Ok(config) => {
@@ -82,7 +83,7 @@ impl Args {
         token: CancellationToken,
         tracker: TaskTracker,
         output: Output,
-    ) -> Result<(), CommandError> {
+    ) -> Result<()> {
         let config = Arc::new(self.read_config().await?);
         let directory = self.directory.canonicalize()?;
         std::env::set_current_dir(&directory)?;
@@ -99,12 +100,12 @@ impl Args {
 }
 
 #[derive(Debug, Clone)]
-pub struct Context {
-    pub token: CancellationToken,
-    pub tracker: TaskTracker,
-    pub directory: PathBuf,
-    pub config: Arc<Config>,
-    pub output: Output,
+struct Context {
+    token: CancellationToken,
+    tracker: TaskTracker,
+    directory: PathBuf,
+    config: Arc<Config>,
+    output: Output,
 }
 
 #[derive(Debug, Subcommand)]
@@ -127,8 +128,12 @@ pub enum Command {
 
 impl Command {
     #[tracing::instrument(level = "debug")]
-    async fn run(self, context: Context) -> Result<(), CommandError> {
-        let runtime = Runtime::new(&context);
+    async fn run(self, context: Context) -> Result<()> {
+        let runtime = Runtime::new(
+            context.token.clone(),
+            context.tracker.clone(),
+            context.directory.clone(),
+        );
 
         match self {
             Command::New(new) => {
@@ -157,34 +162,4 @@ impl Command {
 
         Ok(())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum CommandError {
-    #[error("runtime error: {0}")]
-    Runtime(#[from] runtime::Error),
-
-    #[error("template error: {0}")]
-    Template(#[from] minijinja::Error),
-
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("new error: {0}")]
-    New(#[from] NewError),
-
-    #[error("serve error: {0}")]
-    Serve(#[from] serve::Error),
-
-    #[error("query error: {0}")]
-    Query(#[from] query::Error),
-
-    #[error("shell error: {0}")]
-    Shell(#[from] shell::Error),
-
-    #[error("config read error: {0}")]
-    Config(#[from] toml::de::Error),
-
-    #[error("config write error: {0}")]
-    ConfigWrite(#[from] toml::ser::Error),
 }

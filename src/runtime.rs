@@ -1,5 +1,5 @@
-pub mod http;
 pub mod dump;
+pub mod http;
 
 pub use mlua::prelude::*;
 use mlua::IntoLua;
@@ -15,7 +15,10 @@ use std::{
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
-    command::Context, database::{global::Global, Database}, routes::Routes, template::Template, watch::{watch, Match}
+    database::{global::Global, Database},
+    routes::Routes,
+    template::Template,
+    watch::{watch, Match},
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
@@ -60,11 +63,11 @@ pub struct Options {
 }
 
 impl Runtime {
-    pub fn new(context: &Context) -> Self {
+    pub fn new(token: CancellationToken, tracker: TaskTracker, directory: PathBuf) -> Self {
         Self {
-            token: context.token.clone(),
-            tracker: context.tracker.clone(),
-            directory: context.directory.clone(),
+            token,
+            tracker,
+            directory,
             lua: Arc::new(Mutex::new(None)),
             services: Arc::new(Mutex::new(None)),
             started: Arc::new(AtomicBool::new(false)),
@@ -223,9 +226,14 @@ impl Runtime {
     #[tracing::instrument(level = "debug", skip(self))]
     async fn new_lua(&self) -> Result<Lua, Error> {
         let services = self.services()?;
-        let lua = Lua::new();
-        lua.load_std_libs(
-            LuaStdLib::TABLE | LuaStdLib::STRING | LuaStdLib::UTF8 | LuaStdLib::MATH,
+        let lua = Lua::new_with(
+            LuaStdLib::TABLE
+                | LuaStdLib::STRING
+                | LuaStdLib::UTF8
+                | LuaStdLib::MATH
+                | LuaStdLib::COROUTINE
+                | LuaStdLib::PACKAGE,
+            LuaOptions::default(),
         )?;
 
         let globals = lua.globals();
@@ -297,15 +305,6 @@ impl Runtime {
     pub fn database(&self) -> Result<Database, Error> {
         Ok(self.services()?.database)
     }
-    
-    pub async fn eval<S>(&self, line: S) -> Result<LuaMultiValue, Error>
-    where
-        S: AsRef<str>,
-    {
-        let lua = self.lua()?;
-        let multi = lua.load(line.as_ref()).eval_async().await?;
-        Ok(multi)
-    }
 }
 
 fn json_encode(_: &Lua, value: LuaValue) -> LuaResult<String> {
@@ -336,5 +335,8 @@ async fn builtin_timeout(_lua: Lua, (seconds, func): (f64, LuaFunction)) -> LuaR
 }
 
 fn builtin_markdown(_lua: &Lua, value: String) -> LuaResult<String> {
-    Ok(comrak::markdown_to_html(&value, &comrak::ComrakOptions::default()))
+    Ok(comrak::markdown_to_html(
+        &value,
+        &comrak::ComrakOptions::default(),
+    ))
 }
