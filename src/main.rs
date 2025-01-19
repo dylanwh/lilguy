@@ -1,27 +1,23 @@
 mod command;
 mod database;
+mod repl;
 mod routes;
 mod runtime;
-mod repl;
 mod template;
 mod watch;
 
+use mimalloc::MiMalloc;
 use parking_lot::Mutex;
 use reedline::ExternalPrinter;
-use std::{
-    io::IsTerminal,
-    process::exit,
-    sync::Arc,
-    time::Duration,
-};
+use std::{io::IsTerminal, process::exit, sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing_subscriber::{
-    fmt::MakeWriter,
-    EnvFilter,
-};
+use tracing_subscriber::{fmt::MakeWriter, EnvFilter};
 
 use command::Args;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Clone)]
 pub struct Output {
@@ -100,8 +96,6 @@ async fn main() -> Result<(), eyre::Report> {
             exit(1);
         }
     });
-
-    
 
     args.run(token, tracker, output).await
 }
