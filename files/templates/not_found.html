@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+
+{% block title %}Page Not Found - 404{% endblock %}
+
+{% block content %}
+<article class="container">
+    <header>
+        <h1>404 - Page Not Found</h1>
+        <p>The page you're looking for doesn't exist or has been moved.</p>
+    </header>
+
+    <section>
+        <h2>What can you do?</h2>
+        <ul>
+            <li>Check that the URL is correct</li>
+            <li>Go back to the <a href="/">homepage</a></li>
+            <li>Check the <a href="/docs">documentation</a></li>
+        </ul>
+    </section>
+
+    {% if req.path %}
+    <footer>
+        <p><code>{{ req.path }}</code> could not be found on this server.</p>
+    </footer>
+    {% endif %}
+</article>
+{% endblock %}

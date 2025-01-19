@@ -32,14 +32,13 @@ notify-debouncer-full = { version = "0.4.0", features = ["crossbeam-channel", "m
 nu-ansi-term = { version = "0.50.1", features = ["derive_serde_style", "serde"] }
 open = "5.3.1"
 parking_lot = { version = "0.12.3", features = ["arc_lock", "owning_ref"] }
-path-tree = "0.8.2"
+path-tree = "0.8.1"
 prettytable-rs = "0.10.0"
 reedline = { version = "0.38.0", features = ["external_printer"] }
 regex = "1.11.1"
 reqwest = "0.12.12"
 rusqlite = { version = "0.32.1", features = ["bundled", "serde_json"] }
 rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interpolate-folder-path", "tokio"] }
-rustyline = "15.0.0"
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["indexmap", "preserve_order"] }
 serde_qs = { version = "0.13.0", features = ["axum"] }

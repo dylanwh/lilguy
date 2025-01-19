@@ -1,0 +1,24 @@
+site_name: LilGuy
+theme:
+  name: material  # Using material theme - looks modern and clean
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - API Reference: api-reference.md
+  - Examples: examples.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences  # Enables fancy code blocks
+  - pymdownx.tabbed  # Enables tabbed content
+  - admonition  # Enables note/warning boxes
+  - footnotes
