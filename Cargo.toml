@@ -37,7 +37,7 @@ path-tree = "0.8.1"
 prettytable-rs = "0.10.0"
 reedline = { version = "0.38.0", features = ["external_printer"] }
 regex = "1.11.1"
-reqwest = "0.12.12"
+reqwest = { version = "0.12.12", default-features = false, features = ["brotli", "charset", "cookies", "gzip", "h2", "http2", "json", "macos-system-configuration", "multipart", "rustls-tls", "zstd"] }
 rusqlite = { version = "0.32.1", features = ["bundled", "serde_json"] }
 rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interpolate-folder-path", "tokio"] }
 serde = { version = "1.0.216", features = ["derive"] }
