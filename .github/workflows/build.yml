@@ -5,6 +5,12 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "files/**"
+      - "src/**"
+      - "vendor/**"
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
