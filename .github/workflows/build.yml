@@ -1,0 +1,34 @@
+
+name: Build Packages
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+
+
+jobs:
+  build:
+    name: build package for  ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux-x86_64
+            runs_on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - name: Linux-aarch64
+            runs_on: ubuntu-latest-arm
+            target: aarch64-unknown-linux-musl
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |-
+          rustup target add ${{ matrix.platform.target }}
+          cargo build --release
+      
