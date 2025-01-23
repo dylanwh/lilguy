@@ -64,7 +64,7 @@ impl Matchers {
 #[tracing::instrument(level = "debug", skip(token))]
 pub async fn watch(
     token: CancellationToken,
-    tracker: TaskTracker,
+    tracker: &TaskTracker,
     directory: PathBuf,
     matchers: Vec<(&'static str, Match)>,
 ) -> Receiver<(&'static str, HashSet<PathBuf>)> {

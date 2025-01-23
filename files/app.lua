@@ -1,4 +1,5 @@
 routes["/"] = function(req, res)
+    req.cookies["test"] = "1234"
     res:render("index.html", {})
 end
 

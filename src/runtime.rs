@@ -1,11 +1,13 @@
 pub mod dump;
 pub mod http;
+pub mod os;
 
+use eyre::ContextCompat;
 pub use mlua::prelude::*;
 use mlua::IntoLua;
 use parking_lot::Mutex;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -41,11 +43,8 @@ pub enum Error {
     Reqwest(#[from] reqwest::Error),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Runtime {
-    token: CancellationToken,
-    tracker: TaskTracker,
-    directory: PathBuf,
     lua: Arc<Mutex<Option<Lua>>>,
     services: Arc<Mutex<Option<Services>>>,
     started: Arc<AtomicBool>,
@@ -57,25 +56,9 @@ struct Services {
     template: Template,
 }
 
-#[derive(Debug, Clone)]
-pub struct Options {
-    pub reload: bool,
-}
-
 impl Runtime {
-    pub fn new(token: CancellationToken, tracker: TaskTracker, directory: PathBuf) -> Self {
-        Self {
-            token,
-            tracker,
-            directory,
-            lua: Arc::new(Mutex::new(None)),
-            services: Arc::new(Mutex::new(None)),
-            started: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    pub fn assets_dir(&self) -> PathBuf {
-        self.directory.join("assets")
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// load the main lua file and set up the environment
@@ -109,12 +92,13 @@ impl Runtime {
         self.lua.lock().replace(lua);
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
-    pub fn start_services(&self) -> Result<(), Error> {
+    #[tracing::instrument(level = "debug", skip(self, app))]
+    pub fn start_services(&self, app: &Path) -> Result<(), Error> {
         let mut services = self.services.lock();
+
         if services.is_none() {
-            let database = Database::open(self.directory.join("app.db"))?;
-            let template = Template::new(self.directory.join("templates"));
+            let database = Database::open(app.with_extension("db"))?;
+            let template = Template::new(app.with_file_name("templates"));
             services.replace(Services { database, template });
         }
 
@@ -128,29 +112,35 @@ impl Runtime {
             .ok_or_else(|| Error::ServicesNotStarted)
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
-    async fn start_watcher(&self) -> Result<(), Error> {
+    #[tracing::instrument(level = "debug", skip(self, app))]
+    async fn start_watcher(
+        &self,
+        app: &Path,
+        token: &CancellationToken,
+        tracker: &TaskTracker,
+    ) -> Result<(), Error> {
         let runtime = self.clone();
         let template = runtime.services()?.template.clone();
 
         let mut rx = watch(
-            self.token.clone(),
-            self.tracker.clone(),
-            self.directory.clone(),
+            token.clone(),
+            tracker,
+            app.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
             vec![
                 ("runtime", Match::Extension("lua".to_string())),
-                ("templates", Match::Parent(self.directory.join("templates"))),
+                ("templates", Match::Parent(app.join("templates"))),
             ],
         )
         .await;
 
-        self.tracker.spawn(async move {
+        let app = app.to_path_buf();
+        tracker.spawn(async move {
             while let Some((name, _changes)) = rx.recv().await {
                 tracing::debug!("reload {name}");
                 match name {
                     "runtime" => {
                         tracing::info!("restarting runtime");
-                        if let Err(err) = runtime.restart_lua().await {
+                        if let Err(err) = runtime.restart_lua(&app).await {
                             tracing::error!(?err, "error restarting runtime");
                         }
                     }
@@ -174,14 +164,19 @@ impl Runtime {
         Ok(())
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
-    async fn start_lua(&self) -> Result<(), Error> {
-        let lua = self.new_lua().await?;
+    #[tracing::instrument(level = "debug", skip(self, app))]
+    async fn start_lua(
+        &self,
+        app: &Path,
+        token: &CancellationToken,
+        tracker: &TaskTracker,
+    ) -> Result<(), Error> {
+        let lua = self.new_lua(app).await?;
         self.set_lua(lua);
 
         let runtime = self.clone();
-        let token = self.token.clone();
-        self.tracker.spawn(async move {
+        let token = token.clone();
+        tracker.spawn(async move {
             token.cancelled().await;
             if let Err(err) = runtime.shutdown().await {
                 tracing::error!(?err, "error calling on_shutdown");
@@ -202,29 +197,35 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    async fn restart_lua(&self) -> Result<(), Error> {
-        let lua = self.new_lua().await?;
+    async fn restart_lua(&self, app: &Path) -> Result<(), Error> {
+        let lua = self.new_lua(app).await?;
         self.set_lua(lua);
         Ok(())
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    pub async fn start(&self, options: Options) -> Result<(), Error> {
+    pub async fn start(
+        &self,
+        app: &Path,
+        reload: bool,
+        token: &CancellationToken,
+        tracker: &TaskTracker,
+    ) -> Result<(), Error> {
         if self.started.load(Ordering::Relaxed) {
             return Ok(());
         }
-        self.start_services()?;
-        if options.reload {
-            self.start_watcher().await?;
+        self.start_services(&app)?;
+        if reload {
+            self.start_watcher(&app, token, tracker).await?;
         }
-        self.start_lua().await?;
+        self.start_lua(app, token, tracker).await?;
         self.started.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     #[allow(dependency_on_unit_never_type_fallback)]
-    #[tracing::instrument(level = "debug", skip(self))]
-    async fn new_lua(&self) -> Result<Lua, Error> {
+    #[tracing::instrument(level = "debug", skip(self, app))]
+    async fn new_lua(&self, app: &Path) -> Result<Lua, Error> {
         let services = self.services()?;
         let lua = Lua::new_with(
             LuaStdLib::TABLE
@@ -238,10 +239,9 @@ impl Runtime {
 
         let globals = lua.globals();
         let package = globals.get::<LuaTable>("package")?;
-        #[cfg(windows)]
-        package.set("path", format!("?.lua"))?;
-        #[cfg(not(windows))]
-        package.set("path", self.directory.join("?.lua").to_string_lossy())?;
+        if let Some(parent) = app.parent() {
+            package.set("path", parent.join("?.lua").to_string_lossy())?;
+        }
 
         globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
         globals.set("timeout", lua.create_async_function(builtin_timeout)?)?;

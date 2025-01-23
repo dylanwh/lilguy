@@ -30,6 +30,18 @@ jobs:
           - name: Linux-aarch64
             runs_on: ubuntu-latest
             target: aarch64-unknown-linux-musl
+          - name: Windows-x86_64
+            runs_on: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: Windows-x86
+            runs_on: ubuntu-latest
+            target: i686-pc-windows-msvc
+          - name: MacOS-x86_64
+            runs_on: ubuntu-latest
+            target: x86_64-apple-darwin
+          - name: MacOS-aarch64
+            runs_on: ubuntu-latest
+            target: aarch64-apple-darwin
 
     steps:
       - uses: actions/checkout@v4

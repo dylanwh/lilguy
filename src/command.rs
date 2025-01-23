@@ -26,11 +26,7 @@ pub struct Args {
     #[clap(subcommand)]
     pub command: Command,
 
-    /// change to the specified directory before running the command
-    #[clap(short = 'C', long = "chdir", default_value = ".")]
-    pub directory: PathBuf,
-
-    /// the path to the configuration file (defaults to a platform specific location)
+    /// the path to the Config file (defaults to a platform specific location)
     #[clap(short = 'c', long = "config")]
     pub config_path: Option<PathBuf>,
 
@@ -53,7 +49,7 @@ impl Args {
         self.config_path
             .clone()
             .or_else(|| {
-                dirs::config_dir().map(|dir| dir.join(env!("CARGO_PKG_NAME")).join("config"))
+                dirs::config_dir().map(|dir| dir.join(env!("CARGO_PKG_NAME")).join("config.toml"))
             })
             .expect("could not determine config path")
     }
@@ -85,27 +81,9 @@ impl Args {
         output: Output,
     ) -> Result<()> {
         let config = Arc::new(self.read_config().await?);
-        let directory = self.directory.canonicalize()?;
-        std::env::set_current_dir(&directory)?;
-        let context = Context {
-            token,
-            tracker,
-            directory,
-            config,
-            output,
-        };
 
-        self.command.run(context).await
+        self.command.run(token, tracker, config, output).await
     }
-}
-
-#[derive(Debug, Clone)]
-struct Context {
-    token: CancellationToken,
-    tracker: TaskTracker,
-    directory: PathBuf,
-    config: Arc<Config>,
-    output: Output,
 }
 
 #[derive(Debug, Subcommand)]
@@ -128,37 +106,34 @@ pub enum Command {
 
 impl Command {
     #[tracing::instrument(level = "debug")]
-    async fn run(self, context: Context) -> Result<()> {
-        let runtime = Runtime::new(
-            context.token.clone(),
-            context.tracker.clone(),
-            context.directory.clone(),
-        );
-
+    async fn run(
+        self,
+        token: CancellationToken,
+        tracker: TaskTracker,
+        config: Arc<Config>,
+        output: Output,
+    ) -> Result<()> {
         match self {
             Command::New(new) => {
-                new.run(&context).await?;
-                context.token.cancel();
+                new.run().await?;
+                token.cancel();
             }
             Command::Serve(serve) => {
-                serve.run(&context, runtime).await?;
+                serve.run(&token, &tracker, &config, &output).await?;
             }
             Command::Run(run) => {
-                run.run(runtime).await?;
-                context.token.cancel();
+                run.run(&token, &tracker).await?;
+                token.cancel();
             }
             Command::Query(query) => {
-                runtime.start_services()?;
-                query.run(runtime.database()?).await?;
-                context.token.cancel();
+                query.run().await?;
             }
             Command::Shell(shell) => {
-                runtime.start_services()?;
-                shell.run(&context, runtime).await?;
+                shell.run(&token, &tracker, &config, &output).await?;
             }
         }
-        context.tracker.close();
-        context.tracker.wait().await;
+        tracker.close();
+        tracker.wait().await;
 
         Ok(())
     }

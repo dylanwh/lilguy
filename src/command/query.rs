@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 use prettytable::{Cell, Row};
 use rusqlite::types::Value;
@@ -6,6 +8,10 @@ use crate::database::{self, Database};
 
 #[derive(Debug, Parser)]
 pub struct Query {
+    /// directory to store the database
+    #[clap(short, long, default_value = "app.lua")]
+    pub app: PathBuf,
+
     /// sql query to run
     pub query: String,
 }
@@ -17,7 +23,8 @@ pub enum Error {
 }
 
 impl Query {
-    pub async fn run(self, db: Database) -> Result<(), Error> {
+    pub async fn run(self) -> Result<(), Error> {
+        let db = Database::open(self.app.with_extension("db"))?;
         let query = self.query.clone();
         db.call(move |conn| {
             let mut stmt = conn.prepare(&query)?;

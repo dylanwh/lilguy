@@ -16,79 +16,68 @@ use crate::{runtime, Output};
 
 pub type LuaHighlighterConfig = IndexMap<String, LuaStyle>;
 
-pub struct Repl {
-    pub token: CancellationToken,
-    pub tracker: TaskTracker,
-    pub config: Arc<crate::command::Config>,
-    pub lua: Lua,
-    pub output: Output,
-}
+pub async fn start(
+    token: &CancellationToken,
+    tracker: &TaskTracker,
+    config: &crate::command::Config,
+    output: &Output,
+    lua: Lua,
+) -> Result<(), eyre::Report> {
+    let config = config.shell.clone();
+    let highlighter = LuaHighlighter::new(config.highlighter)?;
+    let history_file = config
+        .history
+        .file
+        .clone()
+        .or_else(|| {
+            let data_dir = dirs::data_dir()?;
+            Some(data_dir.join(env!("CARGO_PKG_NAME")).join("history.txt"))
+        })
+        .expect("could not determine history file");
+    let history_size = config.history.size.unwrap_or(1000);
+    let hinter_style = &config.hinter.style;
+    let prompt_config = config.prompt;
+    tokio::fs::create_dir_all(history_file.parent().expect("history file has no parent"))
+        .await
+        .expect("could not create history file directory");
+    let printer = ExternalPrinter::default();
+    output.set_printer(printer.clone());
 
-impl Repl {
-    pub async fn start(self) -> Result<(), eyre::Report> {
-        let Repl {
-            token,
-            tracker,
-            config,
-            lua,
-            output,
-        } = self;
-        let config = config.shell.clone();
-        let highlighter = LuaHighlighter::new(config.highlighter)?;
-        let history_file = config
-            .history
-            .file
-            .clone()
-            .or_else(|| {
-                let data_dir = dirs::data_dir()?;
-                Some(data_dir.join(env!("CARGO_PKG_NAME")).join("history.txt"))
-            })
-            .expect("could not determine history file");
-        let history_size = config.history.size.unwrap_or(1000);
-        let hinter_style = &config.hinter.style;
-        let prompt_config = config.prompt;
-        tokio::fs::create_dir_all(history_file.parent().expect("history file has no parent"))
-            .await
-            .expect("could not create history file directory");
-        let printer = ExternalPrinter::default();
-        output.set_printer(printer.clone());
-
-        // replace lua print function with our own
-        let globals = lua.globals();
-        let lua_printer = printer.clone();
-        let print = lua.create_function(move |_lua, args: LuaMultiValue| {
-            let mut line = String::new();
-            for arg in args {
-                if !line.is_empty() {
-                    line.push('\t');
-                }
-                line.push_str(&arg.to_string()?);
+    // replace lua print function with our own
+    let globals = lua.globals();
+    let lua_printer = printer.clone();
+    let print = lua.create_function(move |_lua, args: LuaMultiValue| {
+        let mut line = String::new();
+        for arg in args {
+            if !line.is_empty() {
+                line.push('\t');
             }
-            lua_printer.print(line).map_err(mlua::Error::external)?;
-            Ok(())
-        })?;
-        globals.set("print", print)?;
-
-        let reedline = Reedline::create()
-            .with_validator(Box::new(LuaValidator {
-                parser: Mutex::new(new_lua_parser()),
-            }))
-            .with_highlighter(Box::new(highlighter.clone()))
-            .with_hinter(Box::new(
-                DefaultHinter::default().with_style(hinter_style.into()),
-            ))
-            .with_external_printer(printer.clone())
-            .with_history(Box::new(FileBackedHistory::with_file(
-                history_size,
-                history_file,
-            )?));
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-
-        tracker.spawn_blocking(move || read_loop(reedline, prompt_config, tx));
-        tracker.spawn(eval_loop(token.clone(), rx, printer, highlighter, lua));
-
+            line.push_str(&arg.to_string()?);
+        }
+        lua_printer.print(line).map_err(mlua::Error::external)?;
         Ok(())
-    }
+    })?;
+    globals.set("print", print)?;
+
+    let reedline = Reedline::create()
+        .with_validator(Box::new(LuaValidator {
+            parser: Mutex::new(new_lua_parser()),
+        }))
+        .with_highlighter(Box::new(highlighter.clone()))
+        .with_hinter(Box::new(
+            DefaultHinter::default().with_style(hinter_style.into()),
+        ))
+        .with_external_printer(printer.clone())
+        .with_history(Box::new(FileBackedHistory::with_file(
+            history_size,
+            history_file,
+        )?));
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+
+    tracker.spawn_blocking(move || read_loop(reedline, prompt_config, tx));
+    tracker.spawn(eval_loop(token.clone(), rx, printer, highlighter, lua));
+
+    Ok(())
 }
 
 async fn eval_loop(

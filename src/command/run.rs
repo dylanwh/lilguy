@@ -1,22 +1,29 @@
+use std::path::PathBuf;
+
 use clap::Parser;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 pub use crate::runtime::Error;
-use crate::runtime::{Options, Runtime};
-
+use crate::runtime::Runtime;
 
 #[derive(Debug, Parser)]
 pub struct Run {
-    /// the name of the script
-    pub name: String,
+    #[clap(short, long, default_value = "app.lua")]
+    pub app: PathBuf,
+
+    /// function to call
+    #[clap(default_value = "main")]
+    pub func: String,
 
     /// additional arguments to pass to the script
     pub args: Vec<String>,
 }
 impl Run {
     #[tracing::instrument(level = "debug")]
-    pub async fn run(self, runtime: Runtime) -> Result<(), Error> {
-        runtime.start(Options { reload: false }).await?;
-        runtime.run(self.name, self.args).await?;
+    pub async fn run(self, token: &CancellationToken, tracker: &TaskTracker) -> Result<(), Error> {
+        let runtime = Runtime::new();
+        runtime.start(&self.app, false, token, tracker).await?;
+        runtime.run(self.func, self.args).await?;
 
         Ok(())
     }

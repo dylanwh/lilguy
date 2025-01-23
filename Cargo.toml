@@ -16,6 +16,7 @@ bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive", "env"] }
 colored_json = "5.0.0"
 comrak = { version = "0.32.0", features = ["emojis", "shortcodes"] }
+cookie = { version = "0.18.1", features = ["signed", "percent-encoding", "key-expansion"] }
 crc32fast = "1.4.2"
 dirs = "5.0.1"
 dotenv = { version = "0.15.0", features = ["clap"] }
@@ -35,6 +36,7 @@ open = "5.3.1"
 parking_lot = { version = "0.12.3", features = ["arc_lock", "owning_ref"] }
 path-tree = "0.8.1"
 prettytable-rs = "0.10.0"
+rand = "0.8.5"
 reedline = { version = "0.38.0", features = ["external_printer"] }
 regex = "1.11.1"
 reqwest = { version = "0.12.12", default-features = false, features = ["brotli", "charset", "cookies", "gzip", "h2", "http2", "json", "macos-system-configuration", "multipart", "rustls-tls", "zstd"] }
