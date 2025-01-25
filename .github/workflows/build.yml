@@ -57,3 +57,4 @@ jobs:
         with:
           executable-name: lilguy
           target: ${{ matrix.platform.target }}
+          extra-files: ""
