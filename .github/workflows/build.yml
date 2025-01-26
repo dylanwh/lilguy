@@ -18,43 +18,79 @@ env:
 
 
 jobs:
-  build:
-    name: build package for  ${{ matrix.platform.name }}
-    runs-on: ${{ matrix.platform.runs_on }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: Linux-x86_64
-            runs_on: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - name: Linux-aarch64
-            runs_on: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-          - name: Windows-x86_64
-            runs_on: windows-latest
-            target: x86_64-pc-windows-msvc
-          # - name: MacOS-x86_64
-          #   runs_on: ubuntu-latest
-          #   target: x86_64-apple-darwin
-          # - name: MacOS-aarch64
-          #   runs_on: ubuntu-latest
-          #   target: aarch64-apple-darwin
+  # build:
+  #   name: build package for  ${{ matrix.platform.name }}
+  #   runs-on: ${{ matrix.platform.runs_on }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       platform:
+  #         - name: Linux-x86_64
+  #           runs_on: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #         - name: Linux-aarch64
+  #           runs_on: ubuntu-latest
+  #           target: aarch64-unknown-linux-musl
+  #         - name: Windows-x86_64
+  #           runs_on: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         # - name: MacOS-x86_64
+  #         #   runs_on: ubuntu-latest
+  #         #   target: x86_64-apple-darwin
+  #         # - name: MacOS-aarch64
+  #         #   runs_on: ubuntu-latest
+  #         #   target: aarch64-apple-darwin
+
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         submodules: true
+  #     - name: Build binary
+  #       uses: houseabsolute/actions-rust-cross@v1
+  #       with:
+  #         command: build
+  #         target: ${{ matrix.platform.target }}
+  #         args: "--locked --release"
+  #         strip: true
+  #     - name: Publish artifacts and release
+  #       uses: houseabsolute/actions-rust-release@v0
+  #       with:
+  #         executable-name: lilguy
+  #         target: ${{ matrix.platform.target }}
+  #         extra-files: ""
+  build_macos:
+    runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Build binary
-        uses: houseabsolute/actions-rust-cross@v1
-        with:
-          command: build
-          target: ${{ matrix.platform.target }}
-          args: "--locked --release"
-          strip: true
-      - name: Publish artifacts and release
-        uses: houseabsolute/actions-rust-release@v0
-        with:
-          executable-name: lilguy
-          target: ${{ matrix.platform.target }}
-          extra-files: ""
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install the Apple certificate and provisioning profile
+        env:
+          APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          BUILD_APPLICATION_CERT_BASE64: ${{ secrets.BUILD_APPLICATION_CERT_BASE64 }}
+          BUILD_INSTALLER_CERT_BASE64: ${{ secrets.BUILD_INSTALLER_CERT_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_APPLICATION_CERT_BASE64" | base64 --decode -o $BUILD_APPLICATION_CERT_PATH
+          echo -n "$BUILD_INSTALLER_CERT_BASE64" | base64 --decode -o $BUILD_INSTALLER_CERT_PATH
+
+          # create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # import certificate to keychain
+          security import $BUILD_APPLICATION_CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security import $BUILD_INSTALLER_CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+

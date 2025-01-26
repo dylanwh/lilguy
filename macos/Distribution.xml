@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>lilguy</title>
+    <background file="background.png" alignment="bottomleft" scaling="none"/>
+    <background-darkAqua file="background.png" alignment="bottomleft" scaling="none"/>
+    <welcome file="welcome.rtf"/>
+    <conclusion file="conclusion.rtf"/>
+    <license file="license.rtf"/>
+    <options customize="never" require-scripts="false"/>
+    <choices-outline>
+        <line choice="default"/>
+    </choices-outline>
+    <choice id="default" visible="false">
+        <pkg-ref id="app.lilguy.lilguy"/>
+    </choice>
+    <pkg-ref id="app.lilguy.lilguy" version="1.0" onConclusion="none">lilguy.pkg</pkg-ref>
+</installer-gui-script>
