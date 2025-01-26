@@ -48,3 +48,5 @@ xcrun notarytool submit $EXE.pkg \
     --wait
 
 xcrun stapler staple $EXE.pkg
+
+mv $EXE.pkg $EXE-$VERSION.pkg

@@ -6,13 +6,14 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/build.yml"
       - "Cargo.lock"
       - "Cargo.toml"
       - "files/**"
+      - "macos/**"
       - "src/**"
       - "vendor/**"
-      - ".github/workflows/build.yml"
-      - "macos/**"
+      - "wix/**"
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
@@ -69,6 +70,13 @@ jobs:
       - name: build windows installer
         run: 
           cargo install cargo-wix
+          cargo wix
+          mv target/wix/lilguy*.msi .
+
+      - name: upload windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          path: lilguy*.msi
 
   build_macos:
     runs-on: macos-latest
@@ -112,6 +120,6 @@ jobs:
       - name: Upload the artifact
         uses: actions/upload-artifact@v4
         with:
-          path: lilguy.pkg
+          path: lilguy*.pkg
 
 
