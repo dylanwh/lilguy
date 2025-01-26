@@ -76,6 +76,7 @@ jobs:
       - name: upload windows installer
         uses: actions/upload-artifact@v4
         with:
+          name: windows
           path: lilguy*.msi
 
   build_macos:
@@ -120,6 +121,7 @@ jobs:
       - name: Upload the artifact
         uses: actions/upload-artifact@v4
         with:
+          name: macos
           path: lilguy*.pkg
 
 
