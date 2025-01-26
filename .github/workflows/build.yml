@@ -94,4 +94,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
 
+          ./macos/build.sh
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: lilguy.pkg
+
 
