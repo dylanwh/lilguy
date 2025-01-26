@@ -5,6 +5,10 @@ use walkdir::WalkDir;
 
 static PICO_PREFIX: &str = "vendor/pico/scss";
 
+
+#[cfg(target_os = "windows")]
+use winres::WindowsResource;
+
 fn main() {
     let theme_colors = vec![
         "amber", "blue", "cyan", "fuchsia", "green", "grey", "indigo", "jade", "lime", "orange",
@@ -106,4 +110,9 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     println!("cargo:rerun-if-changed={PICO_PREFIX}");
+
+    #[cfg(target_os = "windows")]
+    WindowsResource::new()
+        .set_icon("wix/lilgux.ico")
+        .compile()?;
 }

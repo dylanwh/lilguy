@@ -3,6 +3,10 @@ name = "lilguy"
 version = "0.1.0"
 edition = "2021"
 
+authors = ["Dylan Hardison <dylan@hardison.net>"]
+description = "A simple application server that runs Lua with SQLite, templates and live reload"
+license = "MIT"
+
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
 lto = true
@@ -64,3 +68,6 @@ walkdir = "2.5.0"
 
 [build-dependencies]
 walkdir = "2.5.0"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.19"

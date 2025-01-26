@@ -20,7 +20,6 @@ env:
 
 jobs:
   check_release:
-    name: Check Release
     runs-on: ubuntu-latest
     outputs:
       needs_release: ${{ steps.check_tag.outputs.needs_release }}
@@ -30,11 +29,9 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Install cargo-get
-        run: cargo install cargo-get
+      - run: cargo install cargo-get
       
-      - name: Get version
-        id: get_version
+      - id: get_version
         run: echo "version=$(cargo get package.version)" >> $GITHUB_OUTPUT
       
       - name: Check if tag exists
@@ -48,70 +45,70 @@ jobs:
             git push origin "$VERSION"
             echo "needs_release=true" >> $GITHUB_OUTPUT
           fi
+  # build_windows:
+  #   runs-on: windows-latest
 
-  build_windows:
-    runs-on: windows-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         submodules: true
+  #     - name: install cargo wix
+  #       run: cargo install cargo-wix
+  #     - name: build msi package
+  #       run: cargo wix
+  #     - name: move msi to top dir
+  #       run: mv target/wix/lilguy*.msi .
+  #     - name: upload windows installer
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: windows
+  #         path: lilguy*.msi
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: install cargo wix
-        run: cargo install cargo-wix
-      - name: build msi package
-        run: cargo wix
-      - name: move msi to top dir
-        run: mv target/wix/lilguy*.msi .
-      - name: upload windows installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: lilguy*.msi
+  # build_macos:
+  #   name: macOS build
+  #   runs-on: macos-latest
 
-  build_macos:
-    runs-on: macos-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         submodules: true
+  #     - name: install apple certificates
+  #       env:
+  #         APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
+  #         APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+  #         APPLE_ID: ${{ secrets.APPLE_ID }}
+  #         APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+  #         BUILD_APPLICATION_CERT_BASE64: ${{ secrets.BUILD_APPLICATION_CERT_BASE64 }}
+  #         BUILD_INSTALLER_CERT_BASE64: ${{ secrets.BUILD_INSTALLER_CERT_BASE64 }}
+  #         P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+  #         KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+  #       run: |
+  #         # create variables
+  #         BUILD_APPLICATION_CERT_PATH=$RUNNER_TEMP/build_application_certificate.p12
+  #         BUILD_INSTALLER_CERT_PATH=$RUNNER_TEMP/build_installer_certificate.p12
+  #         KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: install apple certificates
-        env:
-          APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          BUILD_APPLICATION_CERT_BASE64: ${{ secrets.BUILD_APPLICATION_CERT_BASE64 }}
-          BUILD_INSTALLER_CERT_BASE64: ${{ secrets.BUILD_INSTALLER_CERT_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          # create variables
-          BUILD_APPLICATION_CERT_PATH=$RUNNER_TEMP/build_application_certificate.p12
-          BUILD_INSTALLER_CERT_PATH=$RUNNER_TEMP/build_installer_certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+  #         echo -n "$BUILD_APPLICATION_CERT_BASE64" | base64 --decode -o $BUILD_APPLICATION_CERT_PATH
+  #         echo -n "$BUILD_INSTALLER_CERT_BASE64" | base64 --decode -o $BUILD_INSTALLER_CERT_PATH
 
-          echo -n "$BUILD_APPLICATION_CERT_BASE64" | base64 --decode -o $BUILD_APPLICATION_CERT_PATH
-          echo -n "$BUILD_INSTALLER_CERT_BASE64" | base64 --decode -o $BUILD_INSTALLER_CERT_PATH
+  #         # create temporary keychain
+  #         security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+  #         security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+  #         security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
-          # create temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+  #         # import certificate to keychain
+  #         security import $BUILD_APPLICATION_CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+  #         security import $BUILD_INSTALLER_CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+  #         security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+  #         security list-keychain -d user -s $KEYCHAIN_PATH
 
-          # import certificate to keychain
-          security import $BUILD_APPLICATION_CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security import $BUILD_INSTALLER_CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-          ./macos/build.sh
-      - name: Upload the artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos
-          path: lilguy*.pkg
+  #         ./macos/build.sh
+  #     - name: Upload the artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: macos
+  #         path: lilguy*.pkg
 
 
