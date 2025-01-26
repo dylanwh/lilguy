@@ -12,6 +12,7 @@ on:
       - "src/**"
       - "vendor/**"
       - ".github/workflows/build.yml"
+      - "macos/**"
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
