@@ -7,6 +7,9 @@ if ! command -v cargo-get &> /dev/null; then
     cargo install cargo-get
 fi
 
+rustup target add x86_64-apple-darwin
+rustup target add aarch64-apple-darwin
+
 VERSION="$(cargo get package.version)"
 cargo build --locked --target x86_64-apple-darwin --release
 cargo build --locked --target aarch64-apple-darwin --release
