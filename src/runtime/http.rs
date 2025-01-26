@@ -187,7 +187,7 @@ async fn fetch(lua: Lua, (url, options): (String, Option<LuaTable>)) -> LuaResul
 pub async fn create_request(
     lua: &Lua,
     request: Request<Body>,
-) -> Result<(LuaTable, LuaAnyUserData), LuaError> {
+) -> Result<LuaTable, LuaError> {
     let (parts, body) = request.into_parts();
     let req = lua.create_table()?;
     let method = parts.method.as_str();
@@ -198,17 +198,17 @@ pub async fn create_request(
         .unwrap_or("")
         .to_owned();
 
-    let signing_key = lua
-        .named_registry_value::<LuaAnyUserData>("COOKIE_SECRET")?
-        .borrow::<Key>()?;
+    // let signing_key = lua
+    //     .named_registry_value::<LuaAnyUserData>("COOKIE_SECRET")?
+    //     .borrow::<Key>()?;
 
-    let mut jar = CookieJar::new();
-    for cookie in parts.headers.get_all("cookie") {
-        let cookie = cookie.to_str().map_err(LuaError::external)?.to_string();
-        let cookie = Cookie::parse(cookie).map_err(LuaError::external)?;
-        jar.add_original(cookie);
-    }
-    let cookies = lua.create_userdata(LuaCookies { jar, secure: false })?;
+    // let mut jar = CookieJar::new();
+    // for cookie in parts.headers.get_all("cookie") {
+    //     let cookie = cookie.to_str().map_err(LuaError::external)?.to_string();
+    //     let cookie = Cookie::parse(cookie).map_err(LuaError::external)?;
+    //     jar.add_original(cookie);
+    // }
+    // let cookies = lua.create_userdata(LuaCookies { jar, secure: false })?;
     let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
     let body = to_bytes(body, 1024 * 1024 * 16)
         .await
@@ -220,7 +220,7 @@ pub async fn create_request(
     let query: serde_json::Map<String, serde_json::Value> =
         serde_qs::from_str(parts.uri.query().unwrap_or("")).map_err(LuaError::external)?;
     req.set("query", lua.to_value(&query)?)?;
-    req.set("cookies", &cookies)?;
+    // req.set("cookies", &cookies)?;
 
     match content_type.as_str() {
         "application/x-www-form-urlencoded" => {
@@ -233,7 +233,7 @@ pub async fn create_request(
 
     req.set_metatable(lua.named_registry_value::<LuaTable>(REQUEST_MT)?.into());
 
-    Ok((req, cookies))
+    Ok((req ))
 }
 
 pub fn new_response(lua: &Lua) -> Result<LuaTable, LuaError> {

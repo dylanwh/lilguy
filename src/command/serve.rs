@@ -159,7 +159,7 @@ async fn handle_request(
 
     let routes = globals.get::<LuaUserDataRef<Routes>>("routes")?;
     let path = request.uri().path().to_owned();
-    let (req, cookies) = create_request(&lua, request).await?;
+    let req = create_request(&lua, request).await?;
     let res = new_response(&lua)?;
 
     match routes.find(&path) {
@@ -176,34 +176,34 @@ async fn handle_request(
         }
     };
 
-    Ok(LuaResponse { res, cookies })
+    Ok(LuaResponse { res })
 }
 
 #[derive(Debug, Clone)]
 pub struct LuaResponse {
-    cookies: LuaAnyUserData,
+    // cookies: LuaAnyUserData,
     res: LuaTable,
 }
 
 impl IntoResponse for LuaResponse {
     fn into_response(self) -> Response<Body> {
         let status = self.res.get::<u16>("status").unwrap_or(200);
-        let mut headers = self
+        let headers = self
             .res
             .get::<LuaAnyUserData>("headers")
             .and_then(|headers| headers.take::<LuaHeaders>())
             .map(|headers| headers.into_inner())
             .ok()
             .unwrap_or_default();
-        let cookies = self.cookies.take::<LuaCookies>().ok();
-        if let Some(cookies) = cookies {
-            for cookie in cookies.jar.delta() {
-                let Ok(value) = cookie.to_string().parse() else {
-                    continue;
-                };
-                headers.append("set-cookie", value);
-            }
-        }
+        // let cookies = self.cookies.take::<LuaCookies>().ok();
+        // if let Some(cookies) = cookies {
+        //     for cookie in cookies.jar.delta() {
+        //         let Ok(value) = cookie.to_string().parse() else {
+        //             continue;
+        //         };
+        //         headers.append("set-cookie", value);
+        //     }
+        // }
         self.res
             .get::<LuaString>("body")
             .map(|body| Bytes::from(body.as_bytes().to_vec()))
