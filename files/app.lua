@@ -3,7 +3,7 @@ routes["/"] = function(req, res)
 end
 
 routes["/docs"] = function(req, res)
-    res:render("docs.html", {})
+    res:redirect("https://lilguy.app")
 end
 
 not_found = function(req, res)
