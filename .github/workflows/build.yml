@@ -19,46 +19,36 @@ env:
   GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
-  # build:
-  #   name: build package for  ${{ matrix.platform.name }}
-  #   runs-on: ${{ matrix.platform.runs_on }}
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       platform:
-  #         - name: Linux-x86_64
-  #           runs_on: ubuntu-latest
-  #           target: x86_64-unknown-linux-musl
-  #         - name: Linux-aarch64
-  #           runs_on: ubuntu-latest
-  #           target: aarch64-unknown-linux-musl
-  #         - name: Windows-x86_64
-  #           runs_on: windows-latest
-  #           target: x86_64-pc-windows-msvc
-  #         # - name: MacOS-x86_64
-  #         #   runs_on: ubuntu-latest
-  #         #   target: x86_64-apple-darwin
-  #         # - name: MacOS-aarch64
-  #         #   runs_on: ubuntu-latest
-  #         #   target: aarch64-apple-darwin
+  check_release:
+    name: Check Release
+    runs-on: ubuntu-latest
+    outputs:
+      needs_release: ${{ steps.check_tag.outputs.needs_release }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install cargo-get
+        run: cargo install cargo-get
+      
+      - name: Get version
+        id: get_version
+        run: echo "version=$(cargo get package.version)" >> $GITHUB_OUTPUT
+      
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          VERSION="v${{ steps.get_version.outputs.version }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "needs_release=false" >> $GITHUB_OUTPUT
+          else
+            git tag "$VERSION"
+            git push origin "$VERSION"
+            echo "needs_release=true" >> $GITHUB_OUTPUT
+          fi
 
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         submodules: true
-  #     - name: Build binary
-  #       uses: houseabsolute/actions-rust-cross@v1
-  #       with:
-  #         command: build
-  #         target: ${{ matrix.platform.target }}
-  #         args: "--locked --release"
-  #         strip: true
-  #     - name: Publish artifacts and release
-  #       uses: houseabsolute/actions-rust-release@v0
-  #       with:
-  #         executable-name: lilguy
-  #         target: ${{ matrix.platform.target }}
-  #         extra-files: ""
   build_windows:
     runs-on: windows-latest
 
@@ -87,7 +77,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Install the Apple certificate and provisioning profile
+      - name: install apple certificates
         env:
           APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
