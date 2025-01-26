@@ -17,7 +17,6 @@ on:
 env:
   GITHUB_TOKEN: ${{ github.token }}
 
-
 jobs:
   # build:
   #   name: build package for  ${{ matrix.platform.name }}
@@ -59,6 +58,18 @@ jobs:
   #         executable-name: lilguy
   #         target: ${{ matrix.platform.target }}
   #         extra-files: ""
+  build_windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: build windows installer
+        run: 
+          cargo install cargo-wix
+
   build_macos:
     runs-on: macos-latest
 
