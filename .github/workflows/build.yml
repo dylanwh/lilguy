@@ -67,12 +67,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
-      - name: build windows installer
-        run: 
-          cargo install cargo-wix
-          cargo wix
-          mv target/wix/lilguy*.msi .
-
+      - name: install cargo wix
+        run: cargo install cargo-wix
+      - name: build msi package
+        run: cargo wix
+      - name: move msi to top dir
+        run: mv target/wix/lilguy*.msi .
       - name: upload windows installer
         uses: actions/upload-artifact@v4
         with:
