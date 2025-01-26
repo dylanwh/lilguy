@@ -204,7 +204,7 @@
 
           The banner BMP dimensions are 493 x 58 pixels.
         -->
-        <!--<WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>-->
+        <WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>
 
         
         <!--
