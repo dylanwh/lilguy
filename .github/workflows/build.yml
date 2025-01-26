@@ -76,7 +76,8 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           # create variables
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          BUILD_APPLICATION_CERT_PATH=$RUNNER_TEMP/build_application_certificate.p12
+          BUILD_INSTALLER_CERT_PATH=$RUNNER_TEMP/build_installer_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
           echo -n "$BUILD_APPLICATION_CERT_BASE64" | base64 --decode -o $BUILD_APPLICATION_CERT_PATH
