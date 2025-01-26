@@ -34,8 +34,6 @@ pkgbuild --root target/universal-apple-darwin/release \
     --sign "Developer ID Installer: $APPLE_DEVELOPER_NAME ($APPLE_TEAM_ID)" \
     target/$EXE.pkg
 
-pandoc -s -o macos/Resources/welcome.rtf macos/welcome.md
-pandoc -s -o macos/Resources/conclusion.rtf macos/conclusion.md
 
 productbuild \
     --distribution macos/Distribution.xml \
