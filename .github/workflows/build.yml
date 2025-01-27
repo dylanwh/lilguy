@@ -83,7 +83,7 @@ jobs:
           tar --zstd \
             --transform "s,^target/$TARGET/release,lilguy-$VERSION-$PLATFORM," \
             -cf lilguy-$VERSION-$PLATFORM.tar.zst \
-            target/$TARGET/release/lilgux
+            target/$TARGET/release/lilguy
       - name: upload binary
         uses: actions/upload-artifact@v4
         with:
