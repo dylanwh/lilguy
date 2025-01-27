@@ -113,6 +113,6 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     WindowsResource::new()
-        .set_icon("wix/lilgux.ico")
+        .set_icon("wix/lilguy.ico")
         .compile()?;
 }
