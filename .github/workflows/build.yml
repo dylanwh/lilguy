@@ -9,6 +9,7 @@ on:
       - ".github/workflows/build.yml"
       - "Cargo.lock"
       - "Cargo.toml"
+      - "build.rs"
       - "files/**"
       - "macos/**"
       - "src/**"
