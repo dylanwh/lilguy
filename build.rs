@@ -9,7 +9,7 @@ static PICO_PREFIX: &str = "vendor/pico/scss";
 #[cfg(target_os = "windows")]
 use winresource::WindowsResource;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let theme_colors = vec![
         "amber", "blue", "cyan", "fuchsia", "green", "grey", "indigo", "jade", "lime", "orange",
         "pink", "pumpkin", "purple", "red", "sand", "slate", "violet", "yellow", "zinc",
@@ -115,4 +115,6 @@ fn main() {
     WindowsResource::new()
         .set_icon("wix/lilguy.ico")
         .compile()?;
+
+    Ok(())
 }

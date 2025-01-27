@@ -62,6 +62,19 @@ jobs:
             --generate-notes \
             --draft
 
+  build_linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: install cargo-deb
+        run: cargo install cargo-deb
+      - name: install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm
+
   build_windows:
     runs-on: windows-latest
 

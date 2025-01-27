@@ -74,12 +74,6 @@ pub enum NewError {
 impl New {
     #[tracing::instrument(level = "debug")]
     pub async fn run(self) -> Result<(), NewError> {
-        if self.directory.exists() {
-            return Err(NewError::DirectoryExists(
-                self.directory.to_string_lossy().to_string(),
-            ));
-        }
-
         tokio::fs::create_dir_all(&self.directory)
             .await
             .map_err(|e| NewError::CreateDir(self.directory.to_string_lossy().to_string(), e))?;
