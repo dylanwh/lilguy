@@ -73,7 +73,7 @@ jobs:
       - name: install cargo wix
         run: cargo install cargo-wix
       - name: build msi package
-        run: cargo wix
+        run: cargo wix --nocapture
       - name: move msi to top dir
         run: mv target/wix/lilguy*.msi .
       - name: upload windows installer
