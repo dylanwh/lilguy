@@ -51,7 +51,6 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
       - name: create github release (draft)
-        # this does not use an ction as gh is easier to use
         if: steps.check_tag.outputs.needs_release == 'true'
         env:
           VERSION: ${{ steps.get_version.outputs.version }}

@@ -5,6 +5,8 @@ edition = "2021"
 
 authors = ["Dylan Hardison <dylan@hardison.net>"]
 description = "A simple application server that runs Lua with SQLite, templates and live reload"
+homepage = "https://lilguy.app"
+repository = "https://github.com/dylanwh/lilguy"
 license = "MIT"
 
 [profile.release]
