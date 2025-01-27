@@ -62,19 +62,34 @@ jobs:
             --generate-notes \
             --draft
 
-  build_linux:
-    runs-on: ubuntu-latest
+  build_unix:
+    name: build package for  ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            runs_on: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - name: linux-aarch64
+            runs_on: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - name: freebsd-x86_64
+            runs_on: ubuntu-latest
+            target: x86_64-unknown-freebsd
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: install cargo-deb
-        run: cargo install cargo-deb
-      - name: install cargo-generate-rpm
-        run: cargo install cargo-generate-rpm
-
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release"
+          strip: true
   build_windows:
     runs-on: windows-latest
 
