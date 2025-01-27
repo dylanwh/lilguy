@@ -33,7 +33,7 @@ jobs:
       - run: cargo install cargo-get
 
       - id: package_version
-        run: echo "version=$(bargo get package.version)" >> $GITHUB_OUTPUT
+        run: echo "version=$(cargo get package.version)" >> $GITHUB_OUTPUT
 
       - name: Check if tag exists
         id: check_tag
