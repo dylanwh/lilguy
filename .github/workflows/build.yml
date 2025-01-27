@@ -178,7 +178,7 @@ jobs:
         uses: actions/download-artifact@v4
       - name: breate github release (draft)
         run: |
-          mv */*.tar.zst .
+          mv */*.tar.zst */*.msi */*.pkg .
           gh release create $VERSION \
             -t "Release $VERSION" \
             -n "Release $VERSION" \
