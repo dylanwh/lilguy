@@ -167,7 +167,7 @@ jobs:
         with:
           submodules: true
       - name: tag release
-        run:
+        run: |
             git tag "v$VERSION"
             git push origin "v$VERSION"
       - name: publish crate
