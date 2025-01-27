@@ -7,7 +7,7 @@ static PICO_PREFIX: &str = "vendor/pico/scss";
 
 
 #[cfg(target_os = "windows")]
-use winres::WindowsResource;
+use winresource::WindowsResource;
 
 fn main() {
     let theme_colors = vec![
