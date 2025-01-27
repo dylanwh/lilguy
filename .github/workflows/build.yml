@@ -63,6 +63,7 @@ jobs:
             runs_on: ubuntu-latest
             target: x86_64-unknown-freebsd
 
+    if: ${{ needs.cargo_version.outputs.needs_release == 'true' || matrix.platform.name == 'linux-x86_64' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -91,7 +92,8 @@ jobs:
           path: lilguy*.tar.zst
   windows:
     runs-on: windows-latest
-
+    needs: cargo_version
+    if: ${{ needs.cargo_version.outputs.needs_release == 'true' }}
     steps:
       - name: checkout repository
         uses: actions/checkout@v4
@@ -112,6 +114,7 @@ jobs:
   macos:
     runs-on: macos-latest
     needs: cargo_version
+    if: ${{ needs.cargo_version.outputs.needs_release == 'true' }}
 
     steps:
       - name: checkout repository
@@ -170,13 +173,15 @@ jobs:
         run: |
             git tag "v$VERSION"
             git push origin "v$VERSION"
+        continue-on-error: true
       - name: publish crate
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
+        continue-on-error: true
       - name: download all artifacts
         uses: actions/download-artifact@v4
-      - name: breate github release (draft)
+      - name: create github release (draft)
         run: |
           mv */*.tar.zst */*.msi */*.pkg .
           gh release create $VERSION \
