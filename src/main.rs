@@ -72,7 +72,6 @@ impl MakeWriter<'_> for Output {
 
 #[tokio::main]
 async fn main() -> Result<(), eyre::Report> {
-    ignore_not_found(dotenv::dotenv())?;
     let output = Output {
         writer: Arc::new(Mutex::new(Box::new(std::io::stderr()))),
         printer: Arc::new(Mutex::new(None)),
@@ -98,19 +97,6 @@ async fn main() -> Result<(), eyre::Report> {
     });
 
     args.run(token, tracker, output).await
-}
-
-/// Ignore `NotFound` errors from `dotenv::dotenv()`.
-/// We don't care if the `.env` file is missing but the other errors are important.
-fn ignore_not_found<T>(result: Result<T, dotenv::Error>) -> Result<(), dotenv::Error> {
-    use dotenv::Error::Io;
-    use std::io::ErrorKind::NotFound;
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(Io(ref io_err)) if io_err.kind() == NotFound => Ok(()),
-        Err(err) => Err(err),
-    }
 }
 
 fn init_tracing_subscriber(output: Output) {

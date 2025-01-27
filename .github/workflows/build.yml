@@ -162,6 +162,10 @@ jobs:
     env:
       VERSION: ${{ needs.cargo_version.outputs.version }}
     steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: tag release
         run:
             git tag "v$VERSION"

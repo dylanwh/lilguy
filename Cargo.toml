@@ -16,16 +16,15 @@ codegen-units = 1
 
 [dependencies]
 async-tempfile = "0.6.0"
-axum = "0.7.9"
+axum = "0.8.1"
 base64 = "0.22.1"
 bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive", "env"] }
 colored_json = "5.0.0"
-comrak = { version = "0.32.0", features = ["emojis", "shortcodes"] }
+comrak = { version = "0.35.0", features = ["emojis", "shortcodes"] }
 cookie = { version = "0.18.1", features = ["signed", "percent-encoding", "key-expansion"] }
 crc32fast = "1.4.2"
-dirs = "5.0.1"
-dotenv = { version = "0.15.0", features = ["clap"] }
+dirs = "6.0.0"
 eyre = "0.6.12"
 grass = "0.13.4"
 http = "1.2.0"
@@ -35,18 +34,18 @@ inquire = { version = "0.7.5", features = ["console"] }
 mimalloc = "0.1.43"
 minijinja = { version = "2.5.0", features = ["loader", "json", "preserve_order"] }
 mlua = { version = "0.10.2", features = ["lua54", "serialize", "send", "async", "vendored"] }
-notify = { version = "7.0.0", features = ["serde", "crossbeam-channel"] }
-notify-debouncer-full = { version = "0.4.0", features = ["crossbeam-channel", "macos_kqueue", "serde"] }
+notify = { version = "8.0.0", features = ["serde", "crossbeam-channel"] }
+notify-debouncer-full = { version = "0.5.0", features = ["crossbeam-channel", "macos_kqueue", "serde"] }
 nu-ansi-term = { version = "0.50.1", features = ["derive_serde_style", "serde"] }
 open = "5.3.1"
-parking_lot = { version = "0.12.3", features = ["arc_lock", "owning_ref"] }
+parking_lot = { version = "0.12.3", features = ["arc_lock" ] }
 path-tree = "0.8.0"
 prettytable-rs = "0.10.0"
 rand = "0.8.5"
 reedline = { version = "0.38.0", features = ["external_printer"] }
 regex = "1.11.1"
 reqwest = { version = "0.12.12", default-features = false, features = ["brotli", "charset", "cookies", "gzip", "h2", "http2", "json", "macos-system-configuration", "multipart", "rustls-tls", "zstd"] }
-rusqlite = { version = "0.32.1", features = ["bundled", "serde_json"] }
+rusqlite = { version = "0.33.0", features = ["bundled", "serde_json"] }
 rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interpolate-folder-path", "tokio"] }
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["indexmap", "preserve_order"] }
