@@ -30,6 +30,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: Swatinem/rust-cache@v2 
+        with:
+          shared-key: lilguy
+      
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
       - run: cargo install cargo-get
 
       - id: package_version
@@ -46,6 +53,9 @@ jobs:
           fi
 
   unix:
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runs_on }}
     needs: cargo_version
@@ -66,6 +76,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - uses: Swatinem/rust-cache@v2 
+        with:
+          shared-key: lilguy
       - name: build binary
         uses: houseabsolute/actions-rust-cross@v1
         with:
@@ -89,14 +102,21 @@ jobs:
           name: ${{ matrix.platform.name }}
           path: lilguy*.tar.zst
   windows:
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     runs-on: windows-latest
     needs: cargo_version
     if: ${{ needs.cargo_version.outputs.needs_release == 'true' }}
+
     steps:
       - name: checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
+      - uses: Swatinem/rust-cache@v2 
+        with:
+          shared-key: lilguy
       - name: install cargo wix
         run: cargo install cargo-wix
       - name: build msi package
@@ -110,6 +130,9 @@ jobs:
           path: lilguy*.msi
 
   macos:
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     runs-on: macos-latest
     needs: cargo_version
     if: ${{ needs.cargo_version.outputs.needs_release == 'true' }}
@@ -119,6 +142,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+      - uses: Swatinem/rust-cache@v2 
+        with:
+          shared-key: lilguy
       - name: install apple certificates
         env:
           APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
@@ -167,16 +193,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
-      - name: tag release
-        run: |
-            git tag "v$VERSION"
-            git push origin "v$VERSION"
-        continue-on-error: true
-      - name: publish crate
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
-        continue-on-error: true
       - name: download all artifacts
         uses: actions/download-artifact@v4
       - name: create github release (draft)
@@ -188,5 +204,13 @@ jobs:
             --generate-notes \
             --draft
           gh release upload $VERSION lilguy*.msi lilguy*.pkg lilguy*.tar.zst
-
-
+      - name: tag release
+        run: |
+            git tag "v$VERSION"
+            git push origin "v$VERSION"
+        continue-on-error: true
+      - name: publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
+        continue-on-error: true
