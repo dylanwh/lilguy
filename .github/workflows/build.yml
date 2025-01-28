@@ -49,6 +49,7 @@ jobs:
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runs_on }}
     needs: cargo_version
+    if: "${{ needs.cargo_version.outputs.needs_release == 'true' || matrix.platform.name == 'linux-x86_64' }}"
     strategy:
       fail-fast: false
       matrix:
@@ -62,8 +63,6 @@ jobs:
           - name: freebsd-x86_64
             runs_on: ubuntu-latest
             target: x86_64-unknown-freebsd
-
-    if: ${{ needs.cargo_version.outputs.needs_release == 'true' || matrix.platform.name == 'linux-x86_64' }}
     steps:
       - uses: actions/checkout@v4
         with:
