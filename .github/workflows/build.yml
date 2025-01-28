@@ -49,7 +49,6 @@ jobs:
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runs_on }}
     needs: cargo_version
-    if: "${{ needs.cargo_version.outputs.needs_release == 'true' || matrix.platform.name == 'linux-x86_64' }}"
     strategy:
       fail-fast: false
       matrix:
