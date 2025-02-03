@@ -14,7 +14,6 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::Output;
 
-use super::runtime::Runtime;
 use new::New;
 use query::Query;
 use run::Run;

@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Request, State},
+    extract::{Request, State, WebSocketUpgrade},
     http::{Response, StatusCode},
     response::IntoResponse,
     routing::any,
@@ -12,21 +12,28 @@ use cookie::Key;
 use eyre::{Context, ContextCompat, Result};
 use mlua::prelude::*;
 use std::{path::PathBuf, time::Duration};
-use tokio::{io::AsyncWriteExt, net::TcpListener};
+use tokio::{io::AsyncWriteExt, net::TcpListener, time::sleep};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tower_http::trace::{self, TraceLayer};
-use tower_http::{services::ServeDir, timeout::TimeoutLayer};
+use tower_http::{
+    services::ServeDir,
+    timeout::TimeoutLayer,
+    trace::{self, TraceLayer},
+};
 use tracing::Level;
 
 use crate::{
-    repl, routes::Routes, runtime::{
+    command::Config,
+    repl,
+    routes::Routes,
+    runtime::{
         self,
-        http::{create_request, new_response, LuaCookieSecret, LuaCookies, LuaHeaders},
+        http::{
+            create_request, new_response, LuaCookieSecret, LuaCookies, LuaHeaders, LuaWebSocket,
+        },
         Runtime,
-    }, Output
+    },
+    Output,
 };
-
-use super::Config;
 
 #[derive(Debug, Parser)]
 pub struct Serve {
@@ -65,7 +72,7 @@ impl Serve {
         let runtime = Runtime::new();
         let listener = TcpListener::bind(&self.listen).await?;
         runtime
-            .start(&self.app, self.no_reload, &token, &tracker)
+            .start(&self.app, self.no_reload, token, tracker)
             .await?;
 
         let lua = runtime.lua()?;
@@ -86,7 +93,8 @@ impl Serve {
         let app = Router::new()
             .nest_service("/assets", ServeDir::new(assets_dir))
             .route("/", any(handle_request))
-            .route("/*path", any(handle_request))
+            .route("/ws", any(handle_websocket))
+            .route("/{*path}", any(handle_request))
             .with_state(runtime.clone())
             .layer(
                 TraceLayer::new_for_http()
@@ -109,7 +117,7 @@ impl Serve {
         });
 
         // wait a tick to ensure the server is up
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
         let url = format!("http://{}", self.listen);
         let url = url.replace("http://0.0.0.0", "http://127.0.0.1");
 
@@ -136,17 +144,15 @@ enum LuaServeError {
 
     #[error("lua error: {0}")]
     Lua(#[from] LuaError),
-
-    #[error("http status: {0}")]
-    Status(StatusCode),
 }
 
 impl IntoResponse for LuaServeError {
     fn into_response(self) -> Response<Body> {
+        tracing::error!(?self, "error handling request");
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(Body::from(format!("error in lua serve function: {self}")))
-            .unwrap()
+            .expect("could not create response")
     }
 }
 
@@ -156,54 +162,95 @@ async fn handle_request(
 ) -> Result<LuaResponse, LuaServeError> {
     let lua = runtime.lua()?;
     let globals = lua.globals();
-
     let routes = globals.get::<LuaUserDataRef<Routes>>("routes")?;
-    let path = request.uri().path().to_owned();
-    let req = create_request(&lua, request).await?;
-    let res = new_response(&lua)?;
-
-    match routes.find(&path) {
-        Some((handler, path)) => {
-            req.set("route", path.pattern())?;
-            req.set("params", lua.create_table_from(path.params())?)?;
-            handler.call_async::<()>((req, &res)).await?;
-        }
-        None => {
-            let Some(not_found) = globals.get::<Option<LuaFunction>>("not_found")? else {
-                return Err(LuaServeError::Status(StatusCode::NOT_FOUND));
-            };
-            not_found.call_async::<()>((req, &res)).await?;
-        }
+    let (handler, path) = routes.find(request.uri().path());
+    let (route, params) = if let Some(ref path) = path {
+        (
+            LuaValue::String(lua.create_string(path.pattern())?),
+            LuaValue::Table(lua.create_table_from(path.params_iter())?),
+        )
+    } else {
+        (LuaValue::Nil, LuaValue::Table(lua.create_table()?))
     };
+    drop(path);
+    let req = create_request(&lua, request).await?;
+    req.set("route", route)?;
+    req.set("params", params)?;
+
+    let res = new_response(&lua)?;
+    res.set("cookies", req.get::<LuaAnyUserData>("cookies")?)?;
+
+    handler.call_async::<()>((req, &res)).await?;
 
     Ok(LuaResponse { res })
 }
 
+async fn handle_websocket(
+    ws: WebSocketUpgrade,
+    State(runtime): State<Runtime>,
+    request: Request<Body>,
+) -> Response<Body> {
+    let result = handle_websocket_failable(ws, runtime, request).await;
+    match result {
+        Ok(response) => response,
+        Err(err) => err.into_response(),
+    }
+}
+
+async fn handle_websocket_failable(
+    ws: WebSocketUpgrade,
+    runtime: Runtime,
+    request: Request<Body>,
+) -> Result<Response<Body>, LuaServeError> {
+    let lua = runtime.lua()?;
+    let globals = lua.globals();
+
+    let req = create_request(&lua, request).await?;
+    let routes = globals.get::<LuaUserDataRef<Routes>>("routes")?;
+    let Some(handler) = routes.ws.clone() else {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .expect("could not create response"));
+    };
+
+    Ok(ws.on_upgrade(move |socket| {
+        let socket = LuaWebSocket::new(socket);
+        async move {
+            if let Err(err) = handler.call_async::<()>((req, socket)).await {
+                tracing::error!(?err, "error handling websocket request");
+            }
+        }
+    }))
+}
+
 #[derive(Debug, Clone)]
 pub struct LuaResponse {
-    // cookies: LuaAnyUserData,
     res: LuaTable,
 }
 
 impl IntoResponse for LuaResponse {
     fn into_response(self) -> Response<Body> {
         let status = self.res.get::<u16>("status").unwrap_or(200);
-        let headers = self
+        let mut headers = self
             .res
             .get::<LuaAnyUserData>("headers")
             .and_then(|headers| headers.take::<LuaHeaders>())
             .map(|headers| headers.into_inner())
             .ok()
             .unwrap_or_default();
-        // let cookies = self.cookies.take::<LuaCookies>().ok();
-        // if let Some(cookies) = cookies {
-        //     for cookie in cookies.jar.delta() {
-        //         let Ok(value) = cookie.to_string().parse() else {
-        //             continue;
-        //         };
-        //         headers.append("set-cookie", value);
-        //     }
-        // }
+        let cookies = self
+            .res
+            .get::<LuaAnyUserData>("cookies")
+            .and_then(|cookies| cookies.take::<LuaCookies>());
+        if let Ok(cookies) = cookies {
+            for cookie in cookies.jar.delta() {
+                let Ok(value) = cookie.to_string().parse() else {
+                    continue;
+                };
+                headers.append("set-cookie", value);
+            }
+        }
         self.res
             .get::<LuaString>("body")
             .map(|body| Bytes::from(body.as_bytes().to_vec()))
@@ -220,7 +267,7 @@ impl IntoResponse for LuaResponse {
                 Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(Body::empty())
-                    .unwrap()
+                    .expect("could not create response")
             })
     }
 }

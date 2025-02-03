@@ -1,6 +1,10 @@
+use std::borrow::Cow;
+
 use mlua::prelude::*;
 
 use crate::routes::Routes;
+
+use super::{file::LuaFile, http::LuaCookies, regex::LuaRegex};
 
 pub fn to_strings(values: LuaMultiValue) -> Vec<String> {
     let mut results = vec![];
@@ -21,23 +25,46 @@ pub fn stringify_value(indent: usize, value: LuaValue) -> String {
         LuaValue::Table(t) => stringify_table(indent, t),
         LuaValue::Function(f) => stringify_function(indent, f),
         LuaValue::Thread(_) => "--[[thread]] nil".to_string(),
-        LuaValue::UserData(ud) => stringify_userdata(ud),
+        LuaValue::UserData(ud) => stringify_userdata(ud).to_string(),
         LuaValue::Error(error) => format!("--[[error: {error}]] nil"),
         _ => "--[[other]] nil".to_string(),
     }
 }
 
-fn stringify_userdata(ud: LuaAnyUserData) -> String {
+fn stringify_userdata<'a>(ud: LuaAnyUserData) -> Cow<'a, str> {
     if ud.is::<Routes>() {
-        "routes".to_string()
-    } else {
-        "userdata()".to_string()
+        let routes = ud.borrow::<Routes>();
+        let n = routes.iter().count();
+        return format!("Routes [[ {n} routes ]]").into();
     }
 
+    if ud.is::<LuaFile>() {
+        return "file".into();
+    }
+
+    if ud.is::<LuaRegex>() {
+        let Ok(regex) = ud.borrow::<LuaRegex>() else {
+            return "Regex[[ ???? ]]".into();
+        };
+        let pattern = regex.pattern();
+        return format!("Regex [[{pattern}]]").into();
+    }
+
+    if let Ok(cookies) = ud.borrow::<LuaCookies>() {
+        let mut buffer = String::new();
+        buffer.push_str("Cookies [[\n");
+        for cookie in cookies.jar.iter() {
+            buffer.push_str(&format!("  {cookie}\n"));
+        }
+        buffer.push_str("]]");
+        return buffer.into();
+    }
+
+    "userdata".into()
 }
 
 fn stringify_function(_indent: usize, _f: LuaFunction) -> String {
-        "function(...) return ... end".to_string()
+    "function(...) return ... end".to_string()
 }
 
 fn stringify_string(s: mlua::String) -> String {
@@ -112,15 +139,15 @@ fn stringify_table(indent: usize, table: LuaTable) -> String {
     }
 
     buffer.push_str("{\n");
-    
+
     // For sequence values, increase indent for both the value and its container
     table.sequence_values().for_each(|value| {
         let value = value.expect("table value is valid");
         buffer.push_str(&"  ".repeat(indent + 1));
-        buffer.push_str(&stringify_value(indent + 1, value));  // Increase indent
+        buffer.push_str(&stringify_value(indent + 1, value)); // Increase indent
         buffer.push_str(",\n");
     });
-    
+
     // Same for key-value pairs
     table.pairs().for_each(|pair| {
         let (key, value): (LuaValue, LuaValue) = pair.expect("table pair is valid");
@@ -130,12 +157,12 @@ fn stringify_table(indent: usize, table: LuaTable) -> String {
         buffer.push_str(&"  ".repeat(indent + 1));
         buffer.push_str(&stringify_key(key));
         buffer.push_str(" = ");
-        buffer.push_str(&stringify_value(indent + 1, value));  // Increase indent
+        buffer.push_str(&stringify_value(indent + 1, value)); // Increase indent
         buffer.push_str(",\n");
     });
-    
+
     buffer.push_str(&"  ".repeat(indent));
     buffer.push('}');
-    
+
     buffer
 }

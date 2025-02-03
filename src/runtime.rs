@@ -1,13 +1,15 @@
 pub mod dump;
+pub mod file;
 pub mod http;
 pub mod os;
+pub mod regex;
 
-use eyre::ContextCompat;
+use http::not_found;
 pub use mlua::prelude::*;
 use mlua::IntoLua;
 use parking_lot::Mutex;
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -214,9 +216,9 @@ impl Runtime {
         if self.started.load(Ordering::Relaxed) {
             return Ok(());
         }
-        self.start_services(&app)?;
+        self.start_services(app)?;
         if reload {
-            self.start_watcher(&app, token, tracker).await?;
+            self.start_watcher(app, token, tracker).await?;
         }
         self.start_lua(app, token, tracker).await?;
         self.started.store(true, Ordering::Relaxed);
@@ -254,7 +256,7 @@ impl Runtime {
 
         globals.set("global", Global::new(&services.database))?;
 
-        globals.set("routes", Routes::new())?;
+        globals.set("routes", Routes::new(lua.create_function(not_found)?))?;
         globals.set("database", services.database.clone())?;
         globals.set("template", services.template.clone())?;
         globals.set("null", lua.null())?;
@@ -296,6 +298,9 @@ impl Runtime {
         lua.load(LUA_PRELUDE).exec()?;
 
         http::register(&lua)?;
+        os::register(&lua)?;
+        regex::register(&lua)?;
+        file::register(&lua)?;
 
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;

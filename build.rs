@@ -1,10 +1,8 @@
-use std::path::PathBuf;
-use std::{env, fs};
+use std::{env, fs, path::PathBuf};
 
 use walkdir::WalkDir;
 
 static PICO_PREFIX: &str = "vendor/pico/scss";
-
 
 #[cfg(target_os = "windows")]
 use winresource::WindowsResource;

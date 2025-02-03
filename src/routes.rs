@@ -1,56 +1,57 @@
 use mlua::prelude::*;
 use path_tree::PathTree;
-use std::ops::{Deref, DerefMut};
 
-#[derive(Debug, Default)]
-pub struct Routes(PathTree<LuaFunction>);
+#[derive(Debug)]
+pub struct Routes {
+    tree: PathTree<LuaFunction>,
+    not_found: LuaFunction,
+    pub ws: Option<LuaFunction>,
+}
+
+type Route<'a, 'b> = Option<(LuaFunction, path_tree::Path<'a, 'b>)>;
 
 impl Routes {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(not_found: LuaFunction) -> Self {
+        Self {
+            tree: PathTree::new(),
+            ws: None,
+            not_found,
+        }
     }
-}
 
-impl Deref for Routes {
-    type Target = PathTree<LuaFunction>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Routes {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    pub fn find<'a, 'b>(&'a self, path: &'b str) -> (LuaFunction, Option<path_tree::Path<'a, 'b>>) {
+        match self.tree.find(path) {
+            Some((handler, route)) => (handler.clone(), Some(route)),
+            None => (self.not_found.clone(), None),
+        }
     }
 }
 
 /// routes variable
 /// routes["/"] = function(request, path) return path end
 /// routes["/foo"](request) -> "/"
+/// routes.not_found = function(request) return "404" end
 impl LuaUserData for Routes {
-    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method(LuaMetaMethod::Index, |lua, this, key: String| {
-            let route = this.find(key.as_str());
-            match route {
-                Some((func, path)) => {
-                    let pattern = lua.create_string(path.pattern())?;
-                    let params = lua.create_table_from(path.params_iter())?;
-                    let route = lua.create_table()?;
-                    route.set("func", func)?;
-                    route.set("params", params)?;
-                    route.set("pattern", pattern)?;
-
-                    Ok(LuaValue::Table(route))
-                }
-                None => Ok(LuaValue::Nil),
-            }
+    fn add_fields<'lua, F: LuaUserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_set("not_found", |_, this, function: LuaFunction| {
+            this.not_found = function;
+            Ok(())
         });
+        fields.add_field_method_set("websocket", |_, this, function: LuaFunction| {
+            this.ws.replace(function);
+            Ok(())
+        });
+    }
 
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method_mut(
             LuaMetaMethod::NewIndex,
-            |_, this, (key, function): (String, LuaFunction)| {
-                let size = this.insert(&key, function);
+            |_, this, (key, value): (LuaString, LuaFunction)| {
+                let key = key.to_str()?;
+                if !key.starts_with("/") {
+                    return Err(LuaError::runtime("routes must start with /"));
+                }
+                let size = this.tree.insert(&key, value);
                 Ok(size)
             },
         );

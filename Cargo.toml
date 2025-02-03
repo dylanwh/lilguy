@@ -16,7 +16,7 @@ codegen-units = 1
 
 [dependencies]
 async-tempfile = "0.6.0"
-axum = "0.8.1"
+axum = { version = "0.8.1", features = ["http2", "ws"] }
 base64 = "0.22.1"
 bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive", "env"] }
@@ -46,7 +46,7 @@ reedline = { version = "0.38.0", features = ["external_printer"] }
 regex = "1.11.1"
 reqwest = { version = "0.12.12", default-features = false, features = ["brotli", "charset", "cookies", "gzip", "h2", "http2", "json", "macos-system-configuration", "multipart", "rustls-tls", "zstd"] }
 rusqlite = { version = "0.33.0", features = ["bundled", "serde_json"] }
-rust-embed = { version = "8.5.0", features = ["axum", "include-exclude", "interpolate-folder-path", "tokio"] }
+rust-embed = { version = "8.5.0", features = ["include-exclude", "interpolate-folder-path", "tokio"] }
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["indexmap", "preserve_order"] }
 serde_qs = { version = "0.13.0", features = ["axum"] }
@@ -54,6 +54,7 @@ serde_sqlite_jsonb = "0.1.0"
 serde_transmute = "0.1.4"
 serde_urlencoded = "0.7.1"
 strum = { version = "0.26.3", features = ["derive"] }
+tempfile = "3.16.0"
 thiserror = "2.0.9"
 tokio = { version = "1.42.0", features = ["full", "rt"] }
 tokio-util = { version = "0.7.13", features = ["io", "io-util", "rt"] }

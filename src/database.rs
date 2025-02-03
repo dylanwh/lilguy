@@ -4,8 +4,10 @@ pub mod global;
 
 use mlua::prelude::*;
 use std::{path::Path, thread};
-use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{self};
+use tokio::sync::{
+    mpsc::{error::SendError, unbounded_channel, UnboundedReceiver, UnboundedSender},
+    oneshot::{self},
+};
 
 const BUG_TEXT: &str = "bug in lilguy::database";
 

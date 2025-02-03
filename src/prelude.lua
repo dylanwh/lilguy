@@ -27,11 +27,6 @@ end
 
 commands = {}
 
-function not_found(req, res)
-    res.status = 404
-    res.body = string.format("Not found: %s", req.path)
-end
-
 Response = {}
 
 function Response:render(name, context)

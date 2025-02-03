@@ -3,11 +3,7 @@ use std::path::PathBuf;
 use eyre::Result;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-use crate::{
-    repl,
-    runtime::Runtime,
-    Output,
-};
+use crate::{repl, runtime::Runtime, Output};
 
 use super::Config;
 

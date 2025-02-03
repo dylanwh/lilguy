@@ -139,7 +139,7 @@ impl GlobalTable {
         Ok(())
     }
 
-    pub async fn get<'a, K, V>(&self, key: K) -> Result<Option<V>, GlobalTableError>
+    pub async fn get<K, V>(&self, key: K) -> Result<Option<V>, GlobalTableError>
     where
         K: TryInto<GlobalTableKey>,
         V: DeserializeOwned,

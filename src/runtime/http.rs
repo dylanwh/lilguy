@@ -2,6 +2,7 @@ use std::ops::Deref;
 
 use axum::{
     body::{to_bytes, Body},
+    extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
     http::{HeaderMap, HeaderName, HeaderValue},
 };
 use bytes::Bytes;
@@ -33,6 +34,12 @@ pub fn register(lua: &Lua) -> Result<(), super::Error> {
     lua.set_named_registry_value(RESPONSE_MT, response_mt)?;
 
     globals.set("fetch", lua.create_async_function(fetch)?)?;
+    globals.set("cookies", lua.create_function(cookies)?)?;
+
+    lua.set_named_registry_value(
+        "COOKIE_SECRET",
+        lua.create_userdata(LuaCookieSecret(Key::generate()))?,
+    )?;
 
     Ok(())
 }
@@ -79,7 +86,6 @@ impl LuaUserData for LuaHeaders {
     }
 }
 
-#[derive(Debug)]
 pub struct LuaCookies {
     pub jar: CookieJar,
     secure: bool,
@@ -91,7 +97,7 @@ impl LuaCookieSecret {
     pub fn key(&self) -> &Key {
         &self.0
     }
-    
+
     pub(crate) fn new(key: Key) -> Self {
         Self(key)
     }
@@ -120,22 +126,23 @@ impl LuaUserData for LuaCookies {
                 let cookie_secret: LuaUserDataRef<LuaCookieSecret> =
                     lua.named_registry_value("COOKIE_SECRET")?;
                 let mut signed_jar = this.jar.signed_mut(cookie_secret.key());
-                let cookie = if let Some(value) = value {
-                    Cookie::build((key, value))
+                if let Some(value) = value {
+                    let cookie = Cookie::build((key, value))
                         .http_only(true)
                         .same_site(SameSite::Strict)
                         .permanent()
                         .secure(this.secure)
-                        .build()
+                        .build();
+                    signed_jar.add(cookie);
                 } else {
-                    Cookie::build(key)
+                    let cookie = Cookie::build(key)
                         .http_only(true)
                         .same_site(SameSite::Strict)
                         .secure(this.secure)
                         .removal()
-                        .build()
+                        .build();
+                    this.jar.add(cookie);
                 };
-                signed_jar.add(cookie);
                 Ok(())
             },
         );
@@ -184,10 +191,13 @@ async fn fetch(lua: Lua, (url, options): (String, Option<LuaTable>)) -> LuaResul
     Ok(res)
 }
 
-pub async fn create_request(
-    lua: &Lua,
-    request: Request<Body>,
-) -> Result<LuaTable, LuaError> {
+pub fn cookies(_: &Lua, secure: bool) -> Result<LuaCookies, LuaError> {
+    let jar = CookieJar::new();
+    let cookies = LuaCookies { jar, secure };
+    Ok(cookies)
+}
+
+pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTable, LuaError> {
     let (parts, body) = request.into_parts();
     let req = lua.create_table()?;
     let method = parts.method.as_str();
@@ -198,17 +208,13 @@ pub async fn create_request(
         .unwrap_or("")
         .to_owned();
 
-    // let signing_key = lua
-    //     .named_registry_value::<LuaAnyUserData>("COOKIE_SECRET")?
-    //     .borrow::<Key>()?;
-
-    // let mut jar = CookieJar::new();
-    // for cookie in parts.headers.get_all("cookie") {
-    //     let cookie = cookie.to_str().map_err(LuaError::external)?.to_string();
-    //     let cookie = Cookie::parse(cookie).map_err(LuaError::external)?;
-    //     jar.add_original(cookie);
-    // }
-    // let cookies = lua.create_userdata(LuaCookies { jar, secure: false })?;
+    let mut jar = CookieJar::new();
+    for cookie in parts.headers.get_all("cookie") {
+        let cookie = cookie.to_str().map_err(LuaError::external)?.to_string();
+        let cookie = Cookie::parse(cookie).map_err(LuaError::external)?;
+        jar.add_original(cookie);
+    }
+    let cookies = lua.create_userdata(LuaCookies { jar, secure: false })?;
     let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
     let body = to_bytes(body, 1024 * 1024 * 16)
         .await
@@ -220,7 +226,7 @@ pub async fn create_request(
     let query: serde_json::Map<String, serde_json::Value> =
         serde_qs::from_str(parts.uri.query().unwrap_or("")).map_err(LuaError::external)?;
     req.set("query", lua.to_value(&query)?)?;
-    // req.set("cookies", &cookies)?;
+    req.set("cookies", &cookies)?;
 
     match content_type.as_str() {
         "application/x-www-form-urlencoded" => {
@@ -233,7 +239,7 @@ pub async fn create_request(
 
     req.set_metatable(lua.named_registry_value::<LuaTable>(REQUEST_MT)?.into());
 
-    Ok((req ))
+    Ok(req)
 }
 
 pub fn new_response(lua: &Lua) -> Result<LuaTable, LuaError> {
@@ -277,6 +283,12 @@ pub async fn create_response(
     Ok(res)
 }
 
+// default not found handler - usually overridden by the user
+pub fn not_found(_: &Lua, (_, res): (LuaTable, LuaTable)) -> LuaResult<()> {
+    res.set("status", 404)?;
+    Ok(())
+}
+
 pub struct FetchClient(Client);
 
 impl From<Client> for FetchClient {
@@ -294,3 +306,121 @@ impl Deref for FetchClient {
 }
 
 impl LuaUserData for FetchClient {}
+
+pub struct LuaWebSocket {
+    socket: WebSocket,
+}
+
+impl LuaWebSocket {
+    pub fn new(socket: WebSocket) -> Self {
+        Self { socket }
+    }
+}
+
+fn message_from_lua(value: LuaValue) -> Result<Message, LuaError> {
+    match value {
+        LuaValue::String(s) => {
+            let text: &str = &s.to_str()?;
+            Ok(Message::Text(Utf8Bytes::from(text)))
+        }
+        LuaValue::Table(t) => {
+            let r#type = t.get::<String>("type")?;
+            match r#type.as_str() {
+                "binary" => {
+                    let data = t.get::<String>("data")?;
+                    Ok(Message::Binary(Bytes::from(data.as_bytes().to_owned())))
+                }
+                "ping" => {
+                    let data = t.get::<String>("data")?;
+                    Ok(Message::Ping(Bytes::from(data.as_bytes().to_owned())))
+                }
+                "pong" => {
+                    let data = t.get::<String>("data")?;
+                    Ok(Message::Pong(Bytes::from(data.as_bytes().to_owned())))
+                }
+                "close" => {
+                    let code = t.get::<Option<u16>>("code")?;
+                    let reason = t.get::<Option<LuaString>>("reason")?;
+                    match (code, reason) {
+                        (Some(code), Some(reason)) => {
+                            let reason: &str = &reason.to_str()?;
+                            Ok(Message::Close(Some(CloseFrame {
+                                code,
+                                reason: Utf8Bytes::from(reason),
+                            })))
+                        }
+                        (Some(_), None) | (None, Some(_)) => {
+                            Err(LuaError::external("missing code or reason"))
+                        }
+                        (None, None) => Ok(Message::Close(None)),
+                    }
+                }
+                _ => Err(LuaError::external("invalid message type")),
+            }
+        }
+        _ => Err(LuaError::external("invalid message type")),
+    }
+}
+
+macro_rules! lua_message {
+    ($lua:ident, $type:expr, $data:expr) => {{
+        let table = $lua.create_table()?;
+        let data = $lua.create_string(&$data)?;
+        table.set("type", $type)?;
+        table.set("data", data)?;
+        Ok(LuaValue::Table(table))
+    }};
+}
+
+fn lua_from_message(lua: &Lua, message: Message) -> LuaResult<LuaValue> {
+    match message {
+        Message::Text(utf8_bytes) => lua.to_value(utf8_bytes.as_str()),
+        Message::Binary(bytes) => {
+            lua_message!(lua, "binary", bytes)
+        }
+        Message::Ping(bytes) => {
+            lua_message!(lua, "ping", bytes)
+        }
+        Message::Pong(bytes) => {
+            lua_message!(lua, "pong", bytes)
+        }
+        Message::Close(close_frame) => {
+            let table = lua.create_table()?;
+            table.set("type", "close")?;
+            if let Some(close_frame) = close_frame {
+                table.set("code", close_frame.code)?;
+                table.set("reason", lua.create_string(close_frame.reason.as_str())?)?;
+            }
+            Ok(LuaValue::Table(table))
+        }
+    }
+}
+
+impl LuaUserData for LuaWebSocket {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_async_method_mut("send", |_, mut this, message: LuaValue| async move {
+            let message = message_from_lua(message)?;
+            tracing::trace!(?message, "sending message");
+            this.socket.send(message).await.map_err(LuaError::external)
+        });
+
+        methods.add_async_method_mut("recv", |lua, mut this, _: ()| async move {
+            if let Some(message) = this.socket.recv().await {
+                let message = message.map_err(LuaError::external)?;
+                tracing::trace!(?message, "received message");
+                lua_from_message(&lua, message)
+            } else {
+                Ok(LuaValue::Nil)
+            }
+        });
+
+        methods.add_method("protocol", |_, this, _: ()| {
+            Ok(this
+                .socket
+                .protocol()
+                .map(|p| p.to_str().unwrap_or(""))
+                .unwrap_or("")
+                .to_string())
+        });
+    }
+}

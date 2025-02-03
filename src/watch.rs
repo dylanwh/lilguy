@@ -41,7 +41,7 @@ impl Match {
     fn is_match(&self, path: &Path) -> bool {
         match self {
             Match::Parent(parent) => path.starts_with(parent),
-            Match::Extension(ext) => path.extension().map_or(false, |e| e == ext.as_str()),
+            Match::Extension(ext) => path.extension().is_some_and(|e| e == ext.as_str()),
         }
     }
 }
@@ -76,26 +76,25 @@ pub async fn watch(
             let watch_directory = directory.clone();
 
             let debouncer = spawn_blocking(move || {
-                {
-                    let checksums =
-                        initial_checksums(&matchers, directory).expect("initial checksums");
-                    let mut debouncer = new_debouncer(
-                        Duration::from_secs(2),
-                        None,
-                        EventHandler {
-                            checksums,
-                            matchers,
-                            tx,
-                        },
-                    )
-                    .expect("new debouncer");
-                    debouncer
-                        .watch(watch_directory, RecursiveMode::Recursive)
-                        .expect("watch");
+                let checksums = initial_checksums(&matchers, directory).expect("initial checksums");
+                let mut debouncer = new_debouncer(
+                    Duration::from_secs(2),
+                    None,
+                    EventHandler {
+                        checksums,
+                        matchers,
+                        tx,
+                    },
+                )
+                .expect("new debouncer");
+                debouncer
+                    .watch(watch_directory, RecursiveMode::Recursive)
+                    .expect("watch");
 
-                    debouncer
-                }
-            }).await.expect("spawn_blocking");
+                debouncer
+            })
+            .await
+            .expect("spawn_blocking");
 
             tracing::debug!("watching files, will reload on change");
             token.cancelled().await;
