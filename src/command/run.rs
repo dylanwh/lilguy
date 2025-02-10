@@ -22,7 +22,7 @@ impl Run {
     #[tracing::instrument(level = "debug")]
     pub async fn run(self, token: &CancellationToken, tracker: &TaskTracker) -> Result<(), Error> {
         let runtime = Runtime::new();
-        runtime.start(&self.app, false, token, tracker).await?;
+        runtime.start(token, tracker, &self.app, false).await?;
         runtime.run(self.func, self.args).await?;
 
         Ok(())

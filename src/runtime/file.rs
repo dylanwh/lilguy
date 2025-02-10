@@ -76,7 +76,10 @@ impl LuaUserData for LuaFile {
 // "a+": append update mode, previous data is preserved, writing is only allowed at the end of file.
 // The "b" suffix not supported, on all platforms a line is terminated solely by '\n'
 // (because that is how Rust works).
-async fn file_open(lua: Lua, (path, mode): (LuaValue, Option<String>)) -> LuaResult<LuaAnyUserData> {
+async fn file_open(
+    lua: Lua,
+    (path, mode): (LuaValue, Option<String>),
+) -> LuaResult<LuaAnyUserData> {
     let path = path.to_string()?;
 
     let file = match mode.as_deref() {
@@ -215,7 +218,9 @@ impl LuaUserData for LuaTempFile {
 
         methods.add_meta_method(LuaMetaMethod::ToString, |lua, this, _: ()| {
             if let Some(path) = this.path() {
-                Ok(LuaValue::String(lua.create_string(path.as_os_str().as_bytes())?))
+                Ok(LuaValue::String(
+                    lua.create_string(path.as_os_str().as_bytes())?,
+                ))
             } else {
                 Ok(LuaValue::Nil)
             }
@@ -225,7 +230,9 @@ impl LuaUserData for LuaTempFile {
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("path", |lua, this| {
             if let Some(path) = this.path() {
-                Ok(LuaValue::String(lua.create_string(path.as_os_str().as_bytes())?))
+                Ok(LuaValue::String(
+                    lua.create_string(path.as_os_str().as_bytes())?,
+                ))
             } else {
                 Ok(LuaValue::Nil)
             }

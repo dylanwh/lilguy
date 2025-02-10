@@ -3,6 +3,8 @@
 {% block title %}Welcome to your LilGuy app{% endblock %}
 
 
+
+
 {% block content %}
 <article>
     <header>
@@ -16,6 +18,17 @@
         <li>Modify templates in the <code>templates/</code> directory</li>
         <li>Put css, js, and image files in <code>assets/</code></li>
     </ul>
+
+    <h2>Some Ideas</h2>
+    <p>This button counts how many times it's been clicked using htmx. This is using "global tables",
+        a lilguy feature that allows you to store data in a table that is persisted in sqlite.
+    </p>
+    <button hx-get="/click/foo" hx-swap="content">foo</button>
+
+    <p>
+        Below is a second button just for fun.
+    </p>
+    <button hx-get="/click/bar" hx-swap="content">bar</button>
 
     {% if message %}
     <div role="alert">{{ message }}</div>

@@ -1,12 +1,8 @@
-
-
-
 #[macro_export]
-macro_rules! io_methods
-{
+macro_rules! io_methods {
     ($methods:ident, $field:ident) => {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::io::AsyncBufReadExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         $methods.add_async_method_mut("write", |_, mut this, args: LuaMultiValue| async move {
             let mut buf = Vec::new();
@@ -49,7 +45,6 @@ macro_rules! io_methods
             lua.create_string(&buf)
         });
 
-
         $methods.add_async_method_mut("flush", |_, mut this, _: ()| async move {
             this.$field.get_mut().flush().await?;
             Ok(())
@@ -65,5 +60,5 @@ macro_rules! io_methods
             this.$field.shutdown().await.map_err(LuaError::external)?;
             Ok(())
         });
-    }
+    };
 }

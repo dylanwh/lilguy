@@ -1,10 +1,10 @@
 pub mod dump;
 pub mod file;
 pub mod http;
+pub mod macros;
+pub mod net;
 pub mod os;
 pub mod regex;
-pub mod net;
-pub mod macros;
 
 use http::not_found;
 pub use mlua::prelude::*;
@@ -116,10 +116,10 @@ impl Runtime {
             .ok_or_else(|| Error::ServicesNotStarted)
     }
 
-    #[tracing::instrument(level = "debug", skip(self, app))]
+    #[tracing::instrument(level = "debug", skip(self, directory))]
     async fn start_watcher(
         &self,
-        app: &Path,
+        directory: &Path,
         token: &CancellationToken,
         tracker: &TaskTracker,
     ) -> Result<(), Error> {
@@ -129,15 +129,15 @@ impl Runtime {
         let mut rx = watch(
             token.clone(),
             tracker,
-            app.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
+            directory,
             vec![
                 ("runtime", Match::Extension("lua".to_string())),
-                ("templates", Match::Parent(app.join("templates"))),
+                ("templates", Match::StartsWith(directory.join("templates"))),
             ],
         )
         .await;
 
-        let app = app.to_path_buf();
+        let app = directory.to_path_buf();
         tracker.spawn(async move {
             while let Some((name, _changes)) = rx.recv().await {
                 tracing::debug!("reload {name}");
@@ -210,10 +210,10 @@ impl Runtime {
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn start(
         &self,
-        app: &Path,
-        reload: bool,
         token: &CancellationToken,
         tracker: &TaskTracker,
+        app: &Path,
+        reload: bool,
     ) -> Result<(), Error> {
         if self.started.load(Ordering::Relaxed) {
             return Ok(());
@@ -329,7 +329,6 @@ async fn builtin_sleep(_lua: Lua, seconds: f64) -> LuaResult<()> {
     tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
     Ok(())
 }
-
 
 async fn builtin_spawn(_lua: Lua, (func, args): (LuaFunction, LuaMultiValue)) -> LuaResult<()> {
     tokio::spawn(async move {

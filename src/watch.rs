@@ -34,13 +34,13 @@ pub enum Error {
 
 #[derive(Debug)]
 pub enum Match {
-    Parent(PathBuf),
+    StartsWith(PathBuf),
     Extension(String),
 }
 impl Match {
     fn is_match(&self, path: &Path) -> bool {
         match self {
-            Match::Parent(parent) => path.starts_with(parent),
+            Match::StartsWith(prefix) => path.starts_with(prefix),
             Match::Extension(ext) => path.extension().is_some_and(|e| e == ext.as_str()),
         }
     }
@@ -65,18 +65,20 @@ impl Matchers {
 pub async fn watch(
     token: CancellationToken,
     tracker: &TaskTracker,
-    directory: PathBuf,
+    app: &Path,
     matchers: Vec<(&'static str, Match)>,
 ) -> Receiver<(&'static str, HashSet<PathBuf>)> {
+    let directory = app.canonicalize().expect("canonicalize");
+    let directory = directory.parent().expect("parent").to_path_buf();
+
     let matchers = Matchers(matchers);
     let (tx, rx) = channel(5);
 
     tracker.spawn(
         async move {
-            let watch_directory = directory.clone();
-
             let debouncer = spawn_blocking(move || {
-                let checksums = initial_checksums(&matchers, directory).expect("initial checksums");
+                let checksums =
+                    initial_checksums(&matchers, &directory).expect("initial checksums");
                 let mut debouncer = new_debouncer(
                     Duration::from_secs(2),
                     None,
@@ -88,7 +90,7 @@ pub async fn watch(
                 )
                 .expect("new debouncer");
                 debouncer
-                    .watch(watch_directory, RecursiveMode::Recursive)
+                    .watch(directory, RecursiveMode::Recursive)
                     .expect("watch");
 
                 debouncer
@@ -112,11 +114,11 @@ type Changed = HashMap<&'static str, HashSet<PathBuf>>;
 type Checksums = HashMap<&'static str, HashMap<PathBuf, u32>>;
 
 #[tracing::instrument(level = "debug", skip(matcher))]
-fn initial_checksums(matcher: &Matchers, directory: PathBuf) -> Result<Checksums, Error> {
+fn initial_checksums(matcher: &Matchers, directory: &Path) -> Result<Checksums, Error> {
     let mut checksums = Checksums::new();
 
     let mut count: usize = 0;
-    for entry in Walk::new(&directory) {
+    for entry in Walk::new(directory) {
         count += 1;
         let entry = entry?;
         let path = entry.path();
@@ -154,6 +156,9 @@ impl DebounceEventHandler for EventHandler {
                 let mut changes = Changed::new();
 
                 for path in paths {
+                    if !path.is_file() {
+                        continue;
+                    }
                     tracing::debug!(?path, "file changed");
                     if let Some(name) = self.matchers.find_name(path) {
                         tracing::debug!(?name, "matched");

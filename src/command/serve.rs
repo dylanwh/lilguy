@@ -72,7 +72,7 @@ impl Serve {
         let runtime = Runtime::new();
         let listener = TcpListener::bind(&self.listen).await?;
         runtime
-            .start(&self.app, self.no_reload, token, tracker)
+            .start(token, tracker, &self.app, !self.no_reload)
             .await?;
 
         let lua = runtime.lua()?;

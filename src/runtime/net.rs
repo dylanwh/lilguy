@@ -10,7 +10,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::io_methods;
 
-
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     let net = lua.create_table()?;
@@ -98,4 +97,3 @@ async fn net_connect(_lua: Lua, addr: String) -> LuaResult<LuaTcpStream> {
     let stream = BufReader::new(stream);
     Ok(LuaTcpStream { stream })
 }
-
