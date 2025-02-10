@@ -3,6 +3,8 @@ pub mod file;
 pub mod http;
 pub mod os;
 pub mod regex;
+pub mod net;
+pub mod macros;
 
 use http::not_found;
 pub use mlua::prelude::*;
@@ -246,6 +248,7 @@ impl Runtime {
         }
 
         globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
+        globals.set("spawn", lua.create_async_function(builtin_spawn)?)?;
         globals.set("timeout", lua.create_async_function(builtin_timeout)?)?;
         globals.set("markdown", lua.create_function(builtin_markdown)?)?;
 
@@ -301,6 +304,7 @@ impl Runtime {
         os::register(&lua)?;
         regex::register(&lua)?;
         file::register(&lua)?;
+        net::register(&lua)?;
 
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;
@@ -323,6 +327,16 @@ fn json_decode(lua: &Lua, value: String) -> LuaResult<LuaValue> {
 
 async fn builtin_sleep(_lua: Lua, seconds: f64) -> LuaResult<()> {
     tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
+    Ok(())
+}
+
+
+async fn builtin_spawn(_lua: Lua, (func, args): (LuaFunction, LuaMultiValue)) -> LuaResult<()> {
+    tokio::spawn(async move {
+        if let Err(err) = func.call_async::<()>(args).await {
+            tracing::error!(?err, "error in spawned task");
+        }
+    });
     Ok(())
 }
 

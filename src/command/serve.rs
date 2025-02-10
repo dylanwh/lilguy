@@ -207,7 +207,7 @@ async fn handle_websocket_failable(
 
     let req = create_request(&lua, request).await?;
     let routes = globals.get::<LuaUserDataRef<Routes>>("routes")?;
-    let Some(handler) = routes.ws.clone() else {
+    let Some(handler) = routes.websocket.clone() else {
         return Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::empty())

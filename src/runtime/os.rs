@@ -1,6 +1,5 @@
 // async version of standard lua os library
 use mlua::prelude::*;
-use tempfile::NamedTempFile;
 
 use std::os::unix::process::ExitStatusExt;
 

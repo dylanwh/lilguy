@@ -12,7 +12,7 @@ impl LuaRegex {
 
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
-    globals.set("Regex", lua.create_function(regex_new)?)?;
+    globals.set("regex", lua.create_function(regex_new)?)?;
 
     Ok(())
 }
@@ -24,6 +24,10 @@ fn regex_new(_lua: &Lua, pattern: String) -> LuaResult<LuaRegex> {
 
 impl LuaUserData for LuaRegex {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("find", |_, this, text: String| {
+            Ok(this.regex.find(&text).map(|m| m.as_str().to_string()))
+        });
+
         methods.add_method("is_match", |_, this, text: String| {
             Ok(this.regex.is_match(&text))
         });

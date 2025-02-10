@@ -6,6 +6,7 @@ mod runtime;
 mod template;
 mod watch;
 
+use eyre::Result;
 use mimalloc::MiMalloc;
 use parking_lot::Mutex;
 use reedline::ExternalPrinter;
@@ -71,7 +72,7 @@ impl MakeWriter<'_> for Output {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), eyre::Report> {
+async fn main() -> Result<()> {
     let output = Output {
         writer: Arc::new(Mutex::new(Box::new(std::io::stderr()))),
         printer: Arc::new(Mutex::new(None)),

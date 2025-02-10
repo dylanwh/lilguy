@@ -1,8 +1,15 @@
 // this is an async implementation of the `io` module
 
-use std::io::SeekFrom;
-
 use mlua::prelude::*;
+use std::{io::SeekFrom, os::unix::ffi::OsStrExt, path::Path};
+use tempfile::{NamedTempFile, TempPath};
+use tokio::{
+    fs::File,
+    io::{AsyncSeekExt, BufReader},
+};
+use walkdir::{DirEntry, WalkDir};
+
+use crate::io_methods;
 
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let file = lua.create_table()?;
@@ -16,76 +23,18 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
     file.set("create_dir", lua.create_async_function(create_dir)?)?;
     file.set("create_dir_all", lua.create_async_function(create_dir_al)?)?;
     file.set("temp", lua.create_function(file_temp)?)?;
+    file.set("walkdir", lua.create_function(file_walkdir)?)?;
     lua.globals().set("file", file)?;
     Ok(())
 }
 
-use tempfile::NamedTempFile;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
-
 pub struct LuaFile {
-    file: BufReader<tokio::fs::File>,
+    file: BufReader<File>,
 }
 
 impl LuaUserData for LuaFile {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        // reads exactly n bytes from the file. It raises an error if the end of file
-        // is reached before reading the requested number of bytes.
-        methods.add_async_method_mut("read_exact", |lua, mut this, size: usize| async move {
-            let mut buf = vec![0; size];
-            this.file.read_exact(&mut buf).await?;
-
-            lua.create_string(&buf)
-        });
-
-        // read a line
-        methods.add_async_method_mut("read_line", |lua, mut this, _: ()| async move {
-            let mut buf = Vec::new();
-            this.file.read_until(b'\n', &mut buf).await?;
-            lua.create_string(&buf)
-        });
-
-        // read until a byte is found
-        methods.add_async_method_mut("read_until", |lua, mut this, byte: u8| async move {
-            let mut buf = Vec::new();
-            this.file.read_until(byte, &mut buf).await?;
-            (lua.create_string(&buf))
-        });
-
-        // read_to_end
-        methods.add_async_method_mut("read_to_end", |lua, mut this, _: ()| async move {
-            let mut buf = Vec::new();
-            this.file.read_to_end(&mut buf).await?;
-            lua.create_string(&buf)
-        });
-
-        // Writes the value of each of its arguments to file. The arguments must be
-        // strings or numbers.  Contrary to the upstream implementation, this function
-        // will raise an error instead of returning nil if the write fails.
-        methods.add_async_method_mut("write", |_, mut this, args: LuaMultiValue| async move {
-            let file = this.file.get_mut();
-            let mut buf = Vec::new();
-            for arg in args {
-                match arg {
-                    LuaValue::String(s) => buf.extend_from_slice(&s.as_bytes()),
-                    LuaValue::Integer(i) => buf.extend_from_slice(i.to_string().as_bytes()),
-                    LuaValue::Number(n) => buf.extend_from_slice(n.to_string().as_bytes()),
-                    _ => return Err(LuaError::external("invalid argument")),
-                }
-            }
-            file.write_all(&buf).await?;
-            Ok(())
-        });
-
-        methods.add_async_method_mut("flush", |_, mut this, _: ()| async move {
-            this.file.get_mut().flush().await?;
-            Ok(())
-        });
-
-        methods.add_async_method_mut("close", |_, mut this, _: ()| async move {
-            this.file.get_mut().shutdown().await?;
-            Ok(())
-        });
+        io_methods!(methods, file);
 
         // Sets and gets the file position, measured from the beginning of the file, to the position given by offset plus a base specified by the string whence, as follows:
 
@@ -127,10 +76,12 @@ impl LuaUserData for LuaFile {
 // "a+": append update mode, previous data is preserved, writing is only allowed at the end of file.
 // The "b" suffix not supported, on all platforms a line is terminated solely by '\n'
 // (because that is how Rust works).
-async fn file_open(lua: Lua, (path, mode): (String, Option<String>)) -> LuaResult<LuaAnyUserData> {
+async fn file_open(lua: Lua, (path, mode): (LuaValue, Option<String>)) -> LuaResult<LuaAnyUserData> {
+    let path = path.to_string()?;
+
     let file = match mode.as_deref() {
-        Some("r") | None => tokio::fs::File::open(path).await?,
-        Some("w") => tokio::fs::File::create(path).await?,
+        Some("r") | None => File::open(path).await?,
+        Some("w") => File::create(path).await?,
         Some("a") => {
             tokio::fs::OpenOptions::new()
                 .append(true)
@@ -180,7 +131,8 @@ fn file_type(_lua: &Lua, value: LuaValue) -> LuaResult<String> {
 }
 
 // read in an entire file
-async fn file_read(lua: Lua, filename: String) -> LuaResult<LuaString> {
+async fn file_read(lua: Lua, filename: LuaValue) -> LuaResult<LuaString> {
+    let filename = filename.to_string()?;
     let data = tokio::fs::read(filename)
         .await
         .map_err(LuaError::external)?;
@@ -188,19 +140,24 @@ async fn file_read(lua: Lua, filename: String) -> LuaResult<LuaString> {
     lua.create_string(&data)
 }
 
-async fn file_write(_lua: Lua, (filename, data): (String, Vec<u8>)) -> LuaResult<()> {
-    tokio::fs::write(filename, data)
+async fn file_write(_lua: Lua, (filename, data): (LuaValue, LuaString)) -> LuaResult<()> {
+    let filename = filename.to_string()?;
+
+    tokio::fs::write(filename, data.as_bytes())
         .await
         .map_err(LuaError::external)
 }
 
-async fn file_rename(_lua: Lua, (old, new): (String, String)) -> LuaResult<()> {
+async fn file_rename(_lua: Lua, (old, new): (LuaValue, LuaValue)) -> LuaResult<()> {
+    let (old, new) = (old.to_string()?, new.to_string()?);
     tokio::fs::rename(old, new)
         .await
         .map_err(LuaError::external)
 }
 
-async fn file_exists(_lua: Lua, filename: String) -> LuaResult<bool> {
+async fn file_exists(_lua: Lua, filename: LuaValue) -> LuaResult<bool> {
+    let filename = filename.to_string()?;
+
     tokio::fs::metadata(filename)
         .await
         .map(|_| true)
@@ -231,8 +188,126 @@ async fn file_remove(_lua: Lua, filename: String) -> LuaResult<()> {
         .map_err(LuaError::external)
 }
 
-fn file_temp(_lua: &Lua, _args: LuaValue) -> LuaResult<String> {
-    NamedTempFile::new()
-        .map(|f| f.path().to_string_lossy().to_string())
-        .map_err(LuaError::external)
+pub struct LuaTempFile {
+    file: Option<TempPath>,
+}
+
+impl LuaTempFile {
+    pub fn close(&mut self) {
+        self.file.take();
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.file.as_deref()
+    }
+}
+
+impl LuaUserData for LuaTempFile {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method_mut(LuaMetaMethod::Close, |_, this, _: ()| {
+            this.close();
+            Ok(())
+        });
+        methods.add_method_mut("close", |_, this, _: ()| {
+            this.file.take();
+            Ok(())
+        });
+
+        methods.add_meta_method(LuaMetaMethod::ToString, |lua, this, _: ()| {
+            if let Some(path) = this.path() {
+                Ok(LuaValue::String(lua.create_string(path.as_os_str().as_bytes())?))
+            } else {
+                Ok(LuaValue::Nil)
+            }
+        });
+    }
+
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("path", |lua, this| {
+            if let Some(path) = this.path() {
+                Ok(LuaValue::String(lua.create_string(path.as_os_str().as_bytes())?))
+            } else {
+                Ok(LuaValue::Nil)
+            }
+        });
+    }
+}
+
+fn file_temp(lua: &Lua, _args: LuaValue) -> LuaResult<LuaAnyUserData> {
+    let path = NamedTempFile::new()
+        .map(|f| f.into_temp_path())
+        .map_err(LuaError::external)?;
+
+    lua.create_userdata(LuaTempFile { file: Some(path) })
+}
+
+pub struct LuaWalkDir {
+    iter: Box<dyn Iterator<Item = Result<DirEntry, walkdir::Error>> + Send>,
+}
+
+fn file_walkdir(lua: &Lua, (path, opts): (String, Option<LuaTable>)) -> LuaResult<LuaAnyUserData> {
+    let opts = opts.as_ref();
+    let contents_first = opts
+        .and_then(|opts| opts.get::<bool>("contents_first").ok())
+        .unwrap_or(false);
+    let follow_links = opts
+        .and_then(|opts| opts.get::<bool>("follow_links").ok())
+        .unwrap_or(false);
+    let follow_root_links = opts
+        .and_then(|opts| opts.get::<bool>("follow_root_links").ok())
+        .unwrap_or(true);
+    let max_depth = opts.and_then(|opts| opts.get::<usize>("max_depth").ok());
+    let min_depth = opts.and_then(|opts| opts.get::<usize>("min_depth").ok());
+    let same_file_system = opts
+        .and_then(|opts| opts.get::<bool>("same_file_system").ok())
+        .unwrap_or(false);
+
+    let walker = WalkDir::new(path)
+        .follow_links(follow_links)
+        .follow_root_links(follow_root_links)
+        .contents_first(contents_first)
+        .same_file_system(same_file_system);
+
+    let walker = if let Some(min_depth) = min_depth {
+        walker.min_depth(min_depth)
+    } else {
+        walker
+    };
+    let walker = if let Some(max_depth) = max_depth {
+        walker.max_depth(max_depth)
+    } else {
+        walker
+    };
+
+    let ud = lua.create_userdata(LuaWalkDir {
+        iter: Box::new(walker.into_iter()),
+    })?;
+    Ok(ud)
+}
+
+impl LuaUserData for LuaWalkDir {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_meta_method_mut(LuaMetaMethod::Call, |lua, this, ()| {
+            // make sure tokio has time to run
+
+            let entry = this.iter.next().transpose().map_err(LuaError::external)?;
+            let mut ret = LuaMultiValue::new();
+            if let Some(entry) = entry {
+                let path = lua.create_string(entry.path().as_os_str().as_bytes())?;
+                ret.push_back(LuaValue::String(path));
+                let ft = entry.file_type();
+                if ft.is_dir() {
+                    ret.push_back(lua.to_value("directory")?);
+                } else if ft.is_file() {
+                    ret.push_back(lua.to_value("file")?);
+                } else if ft.is_symlink() {
+                    ret.push_back(lua.to_value("symlink")?);
+                } else {
+                    ret.push_back(lua.to_value("unknown")?);
+                }
+            }
+
+            Ok(ret)
+        });
+    }
 }

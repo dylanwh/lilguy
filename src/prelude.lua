@@ -51,3 +51,42 @@ function Response:json(data)
     self.headers["Content-Type"] = "application/json"
     self.body = json.encode(data)
 end
+
+
+function head(n, iter)
+    local i = 0
+    return function()
+        i = i + 1
+        if i <= n then
+            return iter()
+        end
+    end
+end
+
+function collect(iter)
+    local t = {}
+    for v in iter do
+        table.insert(t, v)
+    end
+    return array(t)
+end
+
+function map(f, iter)
+    return function()
+        local v = iter()
+        if v == nil then
+            return nil
+        end
+        return f(v)
+    end
+end
+
+function filter(f, iter)
+    return function()
+        local v
+        repeat
+            v = iter()
+        until v == nil or f(v)
+        return v
+    end
+end
