@@ -12,6 +12,8 @@ struct PicoFiles;
 #[folder = "files"]
 struct Files;
 
+static HTMX_JS: &[u8] = include_bytes!("../../vendor/htmx.min.js");
+
 #[derive(Debug, Parser)]
 pub struct New {
     /// the name of the project
@@ -104,6 +106,16 @@ impl New {
             .await
             .map_err(|e| {
                 NewError::WriteFile(assets_dir.join("pico.css").to_string_lossy().to_string(), e)
+            })?;
+
+        println!("writing htmx.min.js");
+        tokio::fs::write(assets_dir.join("htmx.min.js"), HTMX_JS)
+            .await
+            .map_err(|e| {
+                NewError::WriteFile(
+                    assets_dir.join("htmx.min.js").to_string_lossy().to_string(),
+                    e,
+                )
             })?;
 
         for file in Files::iter() {

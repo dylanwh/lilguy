@@ -20,8 +20,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let theme_dir = pico_dir.join("theme");
     let scss_dir = pico_dir.join("scss");
 
-    // let archive = zip::ZipWriter::new(std::fs::File::create("pico.zip").expect("Failed to create zip file"));
-
     // Create temp directory if it doesn't exist
     fs::create_dir_all(&theme_dir).expect("Failed to create theme directory");
     fs::create_dir_all(&scss_dir).expect("Failed to create pico directory");

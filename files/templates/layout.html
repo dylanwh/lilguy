@@ -1,23 +1,67 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
     <meta
         name="color-scheme"
         content="light dark"
     >
-    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
-    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
-    <link rel="manifest" href="/assets/site.webmanifest">
-    <link rel="icon" type="image/png" sizes="192x192" href="/assets/android-chrome-192x192.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="/assets/android-chrome-512x512.png">
+    <link
+        rel="apple-touch-icon"
+        sizes="180x180"
+        href="/assets/apple-touch-icon.png"
+    >
+    <link
+        rel="icon"
+        type="image/png"
+        sizes="32x32"
+        href="/assets/favicon-32x32.png"
+    >
+    <link
+        rel="icon"
+        type="image/png"
+        sizes="16x16"
+        href="/assets/favicon-16x16.png"
+    >
+    <link
+        rel="icon"
+        type="image/x-icon"
+        href="/assets/favicon.ico"
+    >
+    <link
+        rel="manifest"
+        href="/assets/site.webmanifest"
+    >
+    <link
+        rel="icon"
+        type="image/png"
+        sizes="192x192"
+        href="/assets/android-chrome-192x192.png"
+    >
+    <link
+        rel="icon"
+        type="image/png"
+        sizes="512x512"
+        href="/assets/android-chrome-512x512.png"
+    >
     <title>{% block title %}LilGuy - {{ page_title|default('Welcome') }}{% endblock %}</title>
-    <link rel="stylesheet" href="/assets/pico.css">
+    <link
+        rel="stylesheet"
+        href="/assets/pico.css"
+    >
     {% block extra_css %}{% endblock %}
+    <script
+        src="/assets/htmx.min.js"
+        defer
+    ></script>
+    {% block extra_head_js %}{% endblock %}
 </head>
+
 <body>
     <nav class="container-fluid">
         <ul>
@@ -43,5 +87,5 @@
 
     {% block extra_js %}{% endblock %}
 </body>
-</html>
 
+</html>
