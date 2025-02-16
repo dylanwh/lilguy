@@ -33,7 +33,7 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 inquire = { version = "0.7.5", features = ["console"] }
 mimalloc = "0.1.43"
 minijinja = { version = "2.5.0", features = ["loader", "json", "preserve_order"] }
-mlua = { version = "0.10.2", features = ["lua54", "serialize", "send", "async", "vendored"] }
+mlua = { version = "0.10.2", features = ["luajit", "serialize", "send", "async", "vendored"] }
 notify = { version = "8.0.0", features = ["serde", "crossbeam-channel"] }
 notify-debouncer-full = { version = "0.5.0", features = ["crossbeam-channel", "macos_kqueue", "serde"] }
 nu-ansi-term = { version = "0.50.1", features = ["derive_serde_style", "serde"] }
