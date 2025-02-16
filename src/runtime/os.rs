@@ -1,8 +1,6 @@
 // async version of standard lua os library
 use mlua::prelude::*;
 
-use std::os::unix::process::ExitStatusExt;
-
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let os = lua.create_table()?;
     os.set("execute", lua.create_async_function(os_execute)?)?;
@@ -54,6 +52,8 @@ async fn os_execute(_lua: Lua, command: String) -> LuaResult<(Option<bool>, Stri
 
 #[cfg(not(target_os = "windows"))]
 async fn os_execute(_lua: Lua, command: String) -> LuaResult<(Option<bool>, String, i32)> {
+    use std::os::unix::process::ExitStatusExt;
+
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&command)

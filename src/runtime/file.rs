@@ -1,7 +1,7 @@
 // this is an async implementation of the `io` module
 
 use mlua::prelude::*;
-use std::{io::SeekFrom, os::unix::ffi::OsStrExt, path::Path};
+use std::{io::SeekFrom, path::Path};
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
     fs::File,
@@ -206,6 +206,16 @@ impl LuaTempFile {
 }
 
 impl LuaUserData for LuaTempFile {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("path", |lua, this| {
+            if let Some(path) = this.path() {
+                Ok(LuaValue::String(create_string_from_path(lua, path)?))
+            } else {
+                Ok(LuaValue::Nil)
+            }
+        });
+    }
+
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method_mut(LuaMetaMethod::Close, |_, this, _: ()| {
             this.close();
@@ -218,21 +228,7 @@ impl LuaUserData for LuaTempFile {
 
         methods.add_meta_method(LuaMetaMethod::ToString, |lua, this, _: ()| {
             if let Some(path) = this.path() {
-                Ok(LuaValue::String(
-                    lua.create_string(path.as_os_str().as_bytes())?,
-                ))
-            } else {
-                Ok(LuaValue::Nil)
-            }
-        });
-    }
-
-    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("path", |lua, this| {
-            if let Some(path) = this.path() {
-                Ok(LuaValue::String(
-                    lua.create_string(path.as_os_str().as_bytes())?,
-                ))
+                Ok(LuaValue::String(create_string_from_path(lua, path)?))
             } else {
                 Ok(LuaValue::Nil)
             }
@@ -300,7 +296,7 @@ impl LuaUserData for LuaWalkDir {
             let entry = this.iter.next().transpose().map_err(LuaError::external)?;
             let mut ret = LuaMultiValue::new();
             if let Some(entry) = entry {
-                let path = lua.create_string(entry.path().as_os_str().as_bytes())?;
+                let path = create_string_from_path(lua, entry.path())?;
                 ret.push_back(LuaValue::String(path));
                 let ft = entry.file_type();
                 if ft.is_dir() {
@@ -317,4 +313,19 @@ impl LuaUserData for LuaWalkDir {
             Ok(ret)
         });
     }
+}
+
+fn create_string_from_path<P>(lua: &Lua, path: P) -> LuaResult<LuaString>
+where
+    P: AsRef<Path>,
+{
+    let path = path.as_ref();
+
+    #[cfg(windows)]
+    let path_bytes = path.as_os_str().as_encoded_bytes();
+
+    #[cfg(not(windows))]
+    let path_bytes = path.as_os_str().as_bytes();
+
+    lua.create_string(path_bytes)
 }
