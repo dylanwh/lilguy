@@ -405,11 +405,5 @@ impl LuaUserData for GlobalTable {
             Ok(len as i64)
         });
 
-        // pairs
-        methods.add_async_meta_method(LuaMetaMethod::Pairs, |_, this, ()| async move {
-            let rx: GlobalTablePairs<serde_json::Value> = this.pairs().await;
-
-            Ok(rx)
-        });
     }
 }

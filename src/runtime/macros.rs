@@ -56,9 +56,9 @@ macro_rules! io_methods {
         });
 
         // close meta method
-        $methods.add_async_meta_method_mut(LuaMetaMethod::Close, |_, mut this, _: ()| async move {
-            this.$field.shutdown().await.map_err(LuaError::external)?;
-            Ok(())
-        });
+        // $methods.add_async_meta_method_mut(LuaMetaMethod::Close, |_, mut this, _: ()| async move {
+        //     this.$field.shutdown().await.map_err(LuaError::external)?;
+        //     Ok(())
+        // });
     };
 }

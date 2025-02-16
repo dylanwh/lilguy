@@ -217,12 +217,12 @@ impl LuaUserData for LuaTempFile {
     }
 
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method_mut(LuaMetaMethod::Close, |_, this, _: ()| {
-            this.close();
-            Ok(())
-        });
+        // methods.add_meta_method_mut(LuaMetaMethod::Close, |_, this, _: ()| {
+        //     this.close();
+        //     Ok(())
+        // });
         methods.add_method_mut("close", |_, this, _: ()| {
-            this.file.take();
+            this.close();
             Ok(())
         });
 

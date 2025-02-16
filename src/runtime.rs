@@ -234,10 +234,9 @@ impl Runtime {
         let lua = Lua::new_with(
             LuaStdLib::TABLE
                 | LuaStdLib::STRING
-                | LuaStdLib::UTF8
                 | LuaStdLib::MATH
-                | LuaStdLib::COROUTINE
-                | LuaStdLib::PACKAGE,
+                | LuaStdLib::PACKAGE
+                | LuaStdLib::BIT,
             LuaOptions::default(),
         )?;
 
@@ -265,10 +264,10 @@ impl Runtime {
         globals.set("null", lua.null())?;
         globals.set("array_mt", lua.array_metatable())?;
 
-        lua.set_warning_function(|_, msg, _| {
-            tracing::warn!("{msg}");
-            Ok(())
-        });
+        // lua.set_warning_function(|_, msg, _| {
+        //     tracing::warn!("{msg}");
+        //     Ok(())
+        // });
 
         // lua already has warn, but let's add debug() and info() as well
         // should work like print(foo, bar) == print(foo .. bar)
