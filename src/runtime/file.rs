@@ -315,17 +315,23 @@ impl LuaUserData for LuaWalkDir {
     }
 }
 
+#[cfg(windows)]
 fn create_string_from_path<P>(lua: &Lua, path: P) -> LuaResult<LuaString>
 where
     P: AsRef<Path>,
 {
     let path = path.as_ref();
-
-    #[cfg(windows)]
     let path_bytes = path.as_os_str().as_encoded_bytes();
+    lua.create_string(path_bytes)
+}
 
-    #[cfg(not(windows))]
+#[cfg(not(windows))]
+fn create_string_from_path<P>(lua: &Lua, path: P) -> LuaResult<LuaString>
+where
+    P: AsRef<Path>,
+{
+    use std::os::unix::ffi::OsStrExt;
+    let path = path.as_ref();
     let path_bytes = path.as_os_str().as_bytes();
-
     lua.create_string(path_bytes)
 }
