@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use clap::Parser;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-pub use crate::runtime::Error;
 use crate::runtime::Runtime;
 
 #[derive(Debug, Parser)]
@@ -21,7 +20,11 @@ pub struct Run {
 }
 impl Run {
     #[tracing::instrument(level = "debug")]
-    pub async fn run(self, token: &CancellationToken, tracker: &TaskTracker) -> Result<(), Error> {
+    pub async fn run(
+        self,
+        token: &CancellationToken,
+        tracker: &TaskTracker,
+    ) -> Result<(), eyre::Report> {
         let runtime = Runtime::new();
         runtime.start(token, tracker, &self.app, false).await?;
         runtime.run(self.func, self.args).await?;

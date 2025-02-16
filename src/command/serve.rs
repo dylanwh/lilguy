@@ -26,7 +26,6 @@ use crate::{
     repl,
     routes::Routes,
     runtime::{
-        self,
         http::{
             create_request, new_response, LuaCookieSecret, LuaCookies, LuaHeaders, LuaWebSocket,
         },
@@ -139,8 +138,8 @@ impl Serve {
 
 #[derive(Debug, thiserror::Error)]
 enum LuaServeError {
-    #[error("runtime error: {0}")]
-    Runtime(#[from] runtime::Error),
+    #[error("lilguy error: {0}")]
+    Runtime(#[from] eyre::Report),
 
     #[error("lua error: {0}")]
     Lua(#[from] LuaError),

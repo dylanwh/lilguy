@@ -6,6 +6,7 @@ pub mod net;
 pub mod os;
 pub mod regex;
 
+use eyre::{eyre, Result};
 use http::not_found;
 pub use mlua::prelude::*;
 use mlua::IntoLua;
@@ -29,24 +30,6 @@ use crate::{
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("lua error: {0}")]
-    Lua(#[from] LuaError),
-
-    #[error("lua not initialized")]
-    LuaNotStarted,
-
-    #[error("services not started")]
-    ServicesNotStarted,
-
-    #[error("database error: {0}")]
-    Database(#[from] crate::database::Error),
-
-    #[error("reqwest error: {0}")]
-    Reqwest(#[from] reqwest::Error),
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct Runtime {
     lua: Arc<Mutex<Option<Lua>>>,
@@ -67,7 +50,7 @@ impl Runtime {
 
     /// load the main lua file and set up the environment
     #[allow(dependency_on_unit_never_type_fallback)]
-    pub async fn run(&self, name: String, args: Vec<String>) -> Result<(), Error> {
+    pub async fn run(&self, name: String, args: Vec<String>) -> Result<()> {
         let lua = self.lua()?;
         let globals = lua.globals();
         let commands = globals.get::<LuaTable>("commands")?;
@@ -81,12 +64,12 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn lua(&self) -> Result<Lua, Error> {
+    pub fn lua(&self) -> Result<Lua> {
         let lua = self
             .lua
             .lock()
             .clone()
-            .ok_or_else(|| Error::LuaNotStarted)?;
+            .ok_or_else(|| eyre!("Lua runtime not started"))?;
 
         Ok(lua)
     }
@@ -97,7 +80,7 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self, app))]
-    pub fn start_services(&self, app: &Path) -> Result<(), Error> {
+    pub fn start_services(&self, app: &Path) -> Result<()> {
         let mut services = self.services.lock();
 
         if services.is_none() {
@@ -109,11 +92,11 @@ impl Runtime {
         Ok(())
     }
 
-    fn services(&self) -> Result<Services, Error> {
+    fn services(&self) -> Result<Services> {
         self.services
             .lock()
             .clone()
-            .ok_or_else(|| Error::ServicesNotStarted)
+            .ok_or_else(|| eyre!("services not started"))
     }
 
     #[tracing::instrument(level = "debug", skip(self, directory))]
@@ -122,7 +105,7 @@ impl Runtime {
         directory: &Path,
         token: &CancellationToken,
         tracker: &TaskTracker,
-    ) -> Result<(), Error> {
+    ) -> Result<(), eyre::Error> {
         let runtime = self.clone();
         let template = runtime.services()?.template.clone();
 
@@ -135,7 +118,7 @@ impl Runtime {
                 ("templates", Match::StartsWith(directory.join("templates"))),
             ],
         )
-        .await;
+        .await?;
 
         let app = directory.to_path_buf();
         tracker.spawn(async move {
@@ -174,7 +157,7 @@ impl Runtime {
         app: &Path,
         token: &CancellationToken,
         tracker: &TaskTracker,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
 
@@ -190,7 +173,7 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    pub async fn shutdown(&self) -> Result<(), Error> {
+    pub async fn shutdown(&self) -> Result<()> {
         let lua = self.lua()?;
         let globals = lua.globals();
         if let Some(on_shutdown) = globals.get::<Option<LuaFunction>>("on_shutdown")? {
@@ -201,7 +184,7 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    async fn restart_lua(&self, app: &Path) -> Result<(), Error> {
+    async fn restart_lua(&self, app: &Path) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
         Ok(())
@@ -214,7 +197,7 @@ impl Runtime {
         tracker: &TaskTracker,
         app: &Path,
         reload: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<(), eyre::Report> {
         if self.started.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -229,7 +212,7 @@ impl Runtime {
 
     #[allow(dependency_on_unit_never_type_fallback)]
     #[tracing::instrument(level = "debug", skip(self, app))]
-    async fn new_lua(&self, app: &Path) -> Result<Lua, Error> {
+    async fn new_lua(&self, app: &Path) -> Result<Lua> {
         let services = self.services()?;
         let lua = Lua::new_with(
             LuaStdLib::TABLE
@@ -245,7 +228,6 @@ impl Runtime {
         if let Some(parent) = app.parent() {
             package.set("path", parent.join("?.lua").to_string_lossy())?;
         }
-
 
         globals.set("warn", lua.create_function(builtin_warn)?)?;
         globals.set("debug", lua.create_function(builtin_debug)?)?;
@@ -271,8 +253,6 @@ impl Runtime {
         globals.set("template", services.template.clone())?;
         globals.set("null", lua.null())?;
         globals.set("array_mt", lua.array_metatable())?;
-
-
 
         globals.set(
             "info",
@@ -300,7 +280,7 @@ impl Runtime {
         Ok(lua)
     }
 
-    pub fn database(&self) -> Result<Database, Error> {
+    pub fn database(&self) -> Result<Database> {
         Ok(self.services()?.database)
     }
 }
@@ -317,7 +297,6 @@ fn json_encode(_: &Lua, (value, options): (LuaValue, Option<LuaTable>)) -> LuaRe
     }
     serde_json::to_string(&value).map_err(LuaError::external)
 }
-
 
 /// json.decode(value)
 /// where value is a string containing json

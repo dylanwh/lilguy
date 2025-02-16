@@ -404,6 +404,5 @@ impl LuaUserData for GlobalTable {
             let len = this.len().await.map_err(LuaError::external)?;
             Ok(len as i64)
         });
-
     }
 }
