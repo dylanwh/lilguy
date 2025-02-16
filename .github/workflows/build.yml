@@ -186,12 +186,12 @@ jobs:
       - name: create github release (draft)
         run: |
           mv */*.tar.zst */*.msi */*.pkg .
-          gh release create $VERSION \
+          gh release create v$VERSION \
             -t "Release $VERSION" \
             -n "Release $VERSION" \
             --generate-notes \
             --draft
-          gh release upload $VERSION lilguy*.msi lilguy*.pkg lilguy*.tar.zst
+          gh release upload v$VERSION lilguy*.msi lilguy*.pkg lilguy*.tar.zst
       - name: tag release
         run: |
             git tag "v$VERSION"

@@ -320,9 +320,7 @@ fn create_string_from_path<P>(lua: &Lua, path: P) -> LuaResult<LuaString>
 where
     P: AsRef<Path>,
 {
-    let path = path.as_ref();
-    let path_bytes = path.as_os_str().as_encoded_bytes();
-    lua.create_string(path_bytes)
+    lua.create_string(path.as_ref().as_os_str().as_encoded_bytes())
 }
 
 #[cfg(not(windows))]
@@ -331,7 +329,5 @@ where
     P: AsRef<Path>,
 {
     use std::os::unix::ffi::OsStrExt;
-    let path = path.as_ref();
-    let path_bytes = path.as_os_str().as_bytes();
-    lua.create_string(path_bytes)
+    lua.create_string(path.as_ref().as_os_str().as_bytes())
 }
