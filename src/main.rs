@@ -73,6 +73,8 @@ impl MakeWriter<'_> for Output {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    color_eyre::install()?;
+
     let output = Output {
         writer: Arc::new(Mutex::new(Box::new(std::io::stderr()))),
         printer: Arc::new(Mutex::new(None)),
