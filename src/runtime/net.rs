@@ -47,9 +47,8 @@ impl LuaUserData for LuaTcpListener {
             };
 
             if let Some((stream, addr)) = accept_or_cancelled(&listener, &this.shutdown).await? {
-                let stream = BufReader::new(stream);
                 ret.push_back(LuaValue::UserData(
-                    lua.create_userdata(LuaTcpStream { stream })?,
+                    lua.create_userdata(LuaTcpStream::new( stream ))?,
                 ));
                 ret.push_back(LuaValue::String(lua.create_string(addr.to_string())?));
             }
@@ -77,6 +76,14 @@ async fn accept_or_cancelled(
 #[derive(Debug)]
 pub struct LuaTcpStream {
     stream: BufReader<TcpStream>,
+}
+
+impl LuaTcpStream {
+    pub fn new(stream: TcpStream) -> Self {
+        Self {
+            stream: BufReader::new(stream),
+        }
+    }
 }
 
 impl LuaUserData for LuaTcpStream {

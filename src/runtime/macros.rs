@@ -1,3 +1,4 @@
+
 #[macro_export]
 macro_rules! io_methods {
     ($methods:ident, $field:ident) => {
@@ -14,12 +15,12 @@ macro_rules! io_methods {
                     _ => return Err(LuaError::external("invalid argument")),
                 }
             }
-            this.$field.get_mut().write_all(&buf).await?;
-            Ok(())
+            let rv = this.$field.get_mut().write_all(&buf).await?;
+            Ok(rv)
         });
 
         $methods.add_async_method_mut("read_exact", |_, mut this, len: usize| async move {
-            let mut buf = vec![0; len];
+            let mut buf = Vec::with_capacity(len);
             this.$field
                 .read_exact(&mut buf)
                 .await
@@ -51,14 +52,8 @@ macro_rules! io_methods {
         });
 
         $methods.add_async_method_mut("close", |_, mut this, _: ()| async move {
-            this.$field.shutdown().await.map_err(LuaError::external)?;
+            this.$field.get_mut().shutdown().await.map_err(LuaError::external)?;
             Ok(())
         });
-
-        // close meta method
-        // $methods.add_async_meta_method_mut(LuaMetaMethod::Close, |_, mut this, _: ()| async move {
-        //     this.$field.shutdown().await.map_err(LuaError::external)?;
-        //     Ok(())
-        // });
     };
 }

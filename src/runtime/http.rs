@@ -15,12 +15,13 @@ const FETCH_CLIENT: &str = "fetch_client";
 const REQUEST_MT: &str = "request_mt";
 const RESPONSE_MT: &str = "response_mt";
 
-pub fn register(lua: &Lua) -> Result<(), super::Error> {
+pub fn register(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
     let client = Client::builder()
         .user_agent(format!("lilguy/{}", env!("CARGO_PKG_VERSION")))
-        .build()?;
+        .build()
+        .map_err(LuaError::external)?;
     let fetch_client = FetchClient::from(client);
     lua.set_named_registry_value(FETCH_CLIENT, fetch_client)?;
 

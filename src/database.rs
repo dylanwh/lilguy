@@ -130,7 +130,7 @@ impl Database {
     ///
     /// # Failure
     ///
-    /// Will return `Err` if the gh tokio-rusqlitederlying SQLite close call fails.
+    /// Will return `Err` if the tokio-rusqlitederlying SQLite close call fails.
     pub async fn close(self) -> Result<()> {
         let (sender, receiver) = oneshot::channel::<std::result::Result<(), rusqlite::Error>>();
 
@@ -210,4 +210,13 @@ fn event_loop(mut conn: rusqlite::Connection, mut receiver: UnboundedReceiver<Me
     }
 }
 
-impl LuaUserData for Database {}
+impl LuaUserData for Database {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {}
+
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {}
+
+    fn register(registry: &mut LuaUserDataRegistry<Self>) {
+        Self::add_fields(registry);
+        Self::add_methods(registry);
+    }
+}
