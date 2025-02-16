@@ -16,6 +16,7 @@ pub struct Run {
     pub func: String,
 
     /// additional arguments to pass to the script
+    #[clap(allow_hyphen_values = true, trailing_var_arg = true)]
     pub args: Vec<String>,
 }
 impl Run {

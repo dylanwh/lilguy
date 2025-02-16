@@ -20,6 +20,7 @@ axum = { version = "0.8.1", features = ["http2", "ws"] }
 base64 = "0.22.1"
 bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive", "env"] }
+color-eyre = "0.6.3"
 colored_json = "5.0.0"
 comrak = { version = "0.35.0", features = ["emojis", "shortcodes"] }
 cookie = { version = "0.18.1", features = ["signed", "percent-encoding", "key-expansion"] }
