@@ -130,7 +130,7 @@ impl Database {
     ///
     /// # Failure
     ///
-    /// Will return `Err` if the gh tokio-rusqlitederlying SQLite close call fails.
+    /// Will return `Err` if the tokio-rusqlitederlying SQLite close call fails.
     pub async fn close(self) -> Result<()> {
         let (sender, receiver) = oneshot::channel::<std::result::Result<(), rusqlite::Error>>();
 
