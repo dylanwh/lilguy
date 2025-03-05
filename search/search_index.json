@@ -1,0 +1,1 @@
+{"config":{"lang":["en"],"separator":"[\\s\\-]+","pipeline":["stopWordFilter"]},"docs":[{"location":"","title":"LilGuy - Small Scale Web Development","text":""},{"location":"api-reference/","title":"API Reference","text":""},{"location":"examples/","title":"LilGuy Examples","text":""},{"location":"getting-started/","title":"Getting Started with LilGuy","text":""}]}
