@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Request, State, WebSocketUpgrade},
+    extract::{Request, State},
     http::{Response, StatusCode},
     response::IntoResponse,
     routing::any,
@@ -27,7 +27,7 @@ use crate::{
     routes::Routes,
     runtime::{
         http::{
-            create_request, new_response, LuaCookieSecret, LuaCookies, LuaHeaders, LuaWebSocket,
+            create_request, new_response, LuaCookieSecret, LuaCookies, LuaHeaders,
         },
         Runtime,
     },
@@ -92,7 +92,6 @@ impl Serve {
         let app = Router::new()
             .nest_service("/assets", ServeDir::new(assets_dir))
             .route("/", any(handle_request))
-            .route("/ws", any(handle_websocket))
             .route("/{*path}", any(handle_request))
             .with_state(runtime.clone())
             .layer(
@@ -182,45 +181,6 @@ async fn handle_request(
     handler.call_async::<()>((req, &res)).await?;
 
     Ok(LuaResponse { res })
-}
-
-async fn handle_websocket(
-    ws: WebSocketUpgrade,
-    State(runtime): State<Runtime>,
-    request: Request<Body>,
-) -> Response<Body> {
-    let result = handle_websocket_failable(ws, runtime, request).await;
-    match result {
-        Ok(response) => response,
-        Err(err) => err.into_response(),
-    }
-}
-
-async fn handle_websocket_failable(
-    ws: WebSocketUpgrade,
-    runtime: Runtime,
-    request: Request<Body>,
-) -> Result<Response<Body>, LuaServeError> {
-    let lua = runtime.lua()?;
-    let globals = lua.globals();
-
-    let req = create_request(&lua, request).await?;
-    let routes = globals.get::<LuaUserDataRef<Routes>>("routes")?;
-    let Some(handler) = routes.websocket.clone() else {
-        return Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::empty())
-            .expect("could not create response"));
-    };
-
-    Ok(ws.on_upgrade(move |socket| {
-        let socket = LuaWebSocket::new(socket);
-        async move {
-            if let Err(err) = handler.call_async::<()>((req, socket)).await {
-                tracing::error!(?err, "error handling websocket request");
-            }
-        }
-    }))
 }
 
 #[derive(Debug, Clone)]

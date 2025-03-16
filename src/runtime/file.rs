@@ -5,11 +5,10 @@ use std::{io::SeekFrom, path::Path};
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
     fs::File,
-    io::{AsyncSeekExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
 };
 use walkdir::{DirEntry, WalkDir};
 
-use crate::io_methods;
 
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let file = lua.create_table()?;
@@ -34,7 +33,58 @@ pub struct LuaFile {
 
 impl LuaUserData for LuaFile {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        io_methods!(methods, file);
+
+        methods.add_async_method_mut("write", |_, mut this, args: LuaMultiValue| async move {
+            let mut buf = Vec::new();
+            for arg in args {
+                match arg {
+                    LuaValue::String(s) => buf.extend_from_slice(&s.as_bytes()),
+                    LuaValue::Integer(i) => buf.extend_from_slice(i.to_string().as_bytes()),
+                    LuaValue::Number(n) => buf.extend_from_slice(n.to_string().as_bytes()),
+                    _ => return Err(LuaError::external("invalid argument")),
+                }
+            }
+            this.file.get_mut().write_all(&buf).await?;
+
+            Ok(())
+        });
+
+        methods.add_async_method_mut("read_exact", |_, mut this, len: usize| async move {
+            let mut buf = Vec::with_capacity(len);
+            this.file
+                .read_exact(&mut buf)
+                .await
+                .map_err(LuaError::external)?;
+            Ok(buf)
+        });
+
+        methods.add_async_method_mut("read_line", |lua, mut this, _: ()| async move {
+            let mut buf = Vec::new();
+            this.file.read_until(b'\n', &mut buf).await?;
+            lua.create_string(&buf)
+        });
+
+        methods.add_async_method_mut("read_until", |lua, mut this, byte: u8| async move {
+            let mut buf = Vec::new();
+            this.file.read_until(byte, &mut buf).await?;
+            lua.create_string(&buf)
+        });
+
+        methods.add_async_method_mut("read_to_end", |lua, mut this, _: ()| async move {
+            let mut buf = Vec::new();
+            this.file.read_to_end(&mut buf).await?;
+            lua.create_string(&buf)
+        });
+
+        methods.add_async_method_mut("flush", |_, mut this, _: ()| async move {
+            this.file.get_mut().flush().await?;
+            Ok(())
+        });
+
+        methods.add_async_method_mut("close", |_, mut this, _: ()| async move {
+            this.file.get_mut().shutdown().await.map_err(LuaError::external)?;
+            Ok(())
+        });
 
         // Sets and gets the file position, measured from the beginning of the file, to the position given by offset plus a base specified by the string whence, as follows:
 

@@ -2,11 +2,8 @@ pub mod channel;
 pub mod dump;
 pub mod file;
 pub mod http;
-pub mod macros;
-pub mod net;
 pub mod os;
 pub mod regex;
-pub mod task;
 
 use eyre::{eyre, Result};
 use http::not_found;
@@ -19,7 +16,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
@@ -269,10 +265,8 @@ impl Runtime {
         channel::register(&lua)?;
         file::register(&lua)?;
         http::register(&lua)?;
-        net::register(&lua)?;
         os::register(&lua)?;
         regex::register(&lua)?;
-        task::register(&lua)?;
 
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;
