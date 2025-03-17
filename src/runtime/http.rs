@@ -332,7 +332,7 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
     let query: serde_json::Map<String, serde_json::Value> =
         serde_qs::from_str(parts.uri.query().unwrap_or("")).map_err(LuaError::external)?;
     req.set("query", lua.to_value(&query)?)?;
-    req.set("_cookie_jar", &cookie_jar)?;
+    req.set("cookie_jar", &cookie_jar)?;
 
     match content_type.as_str() {
         "application/x-www-form-urlencoded" => {

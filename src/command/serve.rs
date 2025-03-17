@@ -160,7 +160,7 @@ async fn handle_request(
     req.set("params", params)?;
 
     let res = new_response(&lua)?;
-    res.set("_cookie_jar", req.get::<LuaAnyUserData>("_cookie_jar")?)?;
+    res.set("cookie_jar", req.get::<LuaAnyUserData>("cookie_jar")?)?;
 
     handler.call_async::<()>((req, &res)).await?;
 
@@ -184,7 +184,7 @@ impl IntoResponse for LuaResponse {
             .unwrap_or_default();
         let cookies = self
             .res
-            .get::<LuaAnyUserData>("_cookie_jar")
+            .get::<LuaAnyUserData>("cookie_jar")
             .and_then(|cookies| cookies.take::<LuaCookieJar>());
         if let Ok(cookies) = cookies {
             for cookie in cookies.jar().delta() {
