@@ -34,7 +34,7 @@ tar -xvf lilguy-0.1.3-linux-x86_64.tar.zst
 It is recommended when deploying LilGuy to production or on a publicly accessible server to use `lilguy serve --no-reload`. This will result in performance improvements as the app will not try to reload the file changes every time an update is made to the SQLite database.
 
 ## Contributing
-LilGuy uses the Contributor Covenant code of conduct. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 The MIT License (MIT)
