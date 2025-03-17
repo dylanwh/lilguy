@@ -16,16 +16,18 @@ codegen-units = 1
 
 [dependencies]
 async-tempfile = "0.6.0"
-axum = { version = "0.8.1", features = ["http2", "ws"] }
+axum = { version = "0.8.1", features = ["http2"] }
 base64 = "0.22.1"
 bytes = "1.9.0"
 clap = { version = "4.5.23", features = ["derive", "env"] }
+color-eyre = "0.6.3"
 colored_json = "5.0.0"
 comrak = { version = "0.35.0", features = ["emojis", "shortcodes"] }
-cookie = { version = "0.18.1", features = ["signed", "percent-encoding", "key-expansion"] }
+cookie = { version = "0.18.1", features = ["signed", "private", "percent-encoding", "key-expansion"] }
 crc32fast = "1.4.2"
 dirs = "6.0.0"
 eyre = "0.6.12"
+futures-util = { version = "0.3.31", features = ["sink"] }
 grass = "0.13.4"
 http = "1.2.0"
 ignore = "0.4.23"
@@ -33,7 +35,7 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 inquire = { version = "0.7.5", features = ["console"] }
 mimalloc = "0.1.43"
 minijinja = { version = "2.5.0", features = ["loader", "json", "preserve_order"] }
-mlua = { version = "0.10.2", features = ["lua54", "serialize", "send", "async", "vendored"] }
+mlua = { version = "0.10.2", features = ["luajit52", "serialize", "send", "async", "vendored"] }
 notify = { version = "8.0.0", features = ["serde", "crossbeam-channel"] }
 notify-debouncer-full = { version = "0.5.0", features = ["crossbeam-channel", "macos_kqueue", "serde"] }
 nu-ansi-term = { version = "0.50.1", features = ["derive_serde_style", "serde"] }

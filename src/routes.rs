@@ -5,14 +5,12 @@ use path_tree::PathTree;
 pub struct Routes {
     tree: PathTree<LuaFunction>,
     not_found: LuaFunction,
-    pub websocket: Option<LuaFunction>,
 }
 
 impl Routes {
     pub fn new(not_found: LuaFunction) -> Self {
         Self {
             tree: PathTree::new(),
-            websocket: None,
             not_found,
         }
     }
@@ -29,10 +27,6 @@ impl LuaUserData for Routes {
     fn add_fields<'lua, F: LuaUserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_set("not_found", |_, this, function: LuaFunction| {
             this.not_found = function;
-            Ok(())
-        });
-        fields.add_field_method_set("websocket", |_, this, function: LuaFunction| {
-            this.websocket.replace(function);
             Ok(())
         });
     }

@@ -4,7 +4,7 @@ use mlua::prelude::*;
 
 use crate::routes::Routes;
 
-use super::{file::LuaFile, http::LuaCookies, regex::LuaRegex};
+use super::{file::LuaFile, http::LuaCookieJar, regex::LuaRegex};
 
 pub fn to_strings(values: LuaMultiValue) -> Vec<String> {
     let mut results = vec![];
@@ -50,10 +50,10 @@ fn stringify_userdata<'a>(ud: LuaAnyUserData) -> Cow<'a, str> {
         return format!("Regex [[{pattern}]]").into();
     }
 
-    if let Ok(cookies) = ud.borrow::<LuaCookies>() {
+    if let Ok(cookies) = ud.borrow::<LuaCookieJar>() {
         let mut buffer = String::new();
         buffer.push_str("Cookies [[\n");
-        for cookie in cookies.jar.iter() {
+        for cookie in cookies.jar().iter() {
             buffer.push_str(&format!("  {cookie}\n"));
         }
         buffer.push_str("]]");

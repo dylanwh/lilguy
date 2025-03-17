@@ -1,11 +1,11 @@
+pub mod channel;
 pub mod dump;
 pub mod file;
 pub mod http;
-pub mod macros;
-pub mod net;
 pub mod os;
 pub mod regex;
 
+use eyre::{eyre, Result};
 use http::not_found;
 pub use mlua::prelude::*;
 use mlua::IntoLua;
@@ -16,7 +16,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
@@ -28,24 +27,7 @@ use crate::{
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("lua error: {0}")]
-    Lua(#[from] LuaError),
-
-    #[error("lua not initialized")]
-    LuaNotStarted,
-
-    #[error("services not started")]
-    ServicesNotStarted,
-
-    #[error("database error: {0}")]
-    Database(#[from] crate::database::Error),
-
-    #[error("reqwest error: {0}")]
-    Reqwest(#[from] reqwest::Error),
-}
+const SQL_SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug, Clone, Default)]
 pub struct Runtime {
@@ -67,7 +49,7 @@ impl Runtime {
 
     /// load the main lua file and set up the environment
     #[allow(dependency_on_unit_never_type_fallback)]
-    pub async fn run(&self, name: String, args: Vec<String>) -> Result<(), Error> {
+    pub async fn run(&self, name: String, args: Vec<String>) -> Result<()> {
         let lua = self.lua()?;
         let globals = lua.globals();
         let commands = globals.get::<LuaTable>("commands")?;
@@ -81,12 +63,12 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn lua(&self) -> Result<Lua, Error> {
+    pub fn lua(&self) -> Result<Lua> {
         let lua = self
             .lua
             .lock()
             .clone()
-            .ok_or_else(|| Error::LuaNotStarted)?;
+            .ok_or_else(|| eyre!("Lua runtime not started"))?;
 
         Ok(lua)
     }
@@ -97,23 +79,34 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self, app))]
-    pub fn start_services(&self, app: &Path) -> Result<(), Error> {
-        let mut services = self.services.lock();
-
-        if services.is_none() {
-            let database = Database::open(app.with_extension("db"))?;
-            let template = Template::new(app.with_file_name("templates"));
-            services.replace(Services { database, template });
+    pub async fn start_services(&self, app: &Path) -> Result<()> {
+        let db;
+        {
+            let mut services = self.services.lock();
+            if services.is_none() {
+                let database = Database::open(app.with_extension("db"))?;
+                let template = Template::new(app.with_file_name("templates"));
+                db = database.clone();
+                services.replace(Services { database, template });
+            } else {
+                db = services.as_ref().expect("services").database.clone();
+            }
         }
+
+        db.call(|conn| {
+            conn.execute_batch(SQL_SCHEMA)?;
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
 
-    fn services(&self) -> Result<Services, Error> {
+    fn services(&self) -> Result<Services> {
         self.services
             .lock()
             .clone()
-            .ok_or_else(|| Error::ServicesNotStarted)
+            .ok_or_else(|| eyre!("services not started"))
     }
 
     #[tracing::instrument(level = "debug", skip(self, directory))]
@@ -122,7 +115,7 @@ impl Runtime {
         directory: &Path,
         token: &CancellationToken,
         tracker: &TaskTracker,
-    ) -> Result<(), Error> {
+    ) -> Result<(), eyre::Error> {
         let runtime = self.clone();
         let template = runtime.services()?.template.clone();
 
@@ -135,7 +128,7 @@ impl Runtime {
                 ("templates", Match::StartsWith(directory.join("templates"))),
             ],
         )
-        .await;
+        .await?;
 
         let app = directory.to_path_buf();
         tracker.spawn(async move {
@@ -174,7 +167,7 @@ impl Runtime {
         app: &Path,
         token: &CancellationToken,
         tracker: &TaskTracker,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
 
@@ -190,7 +183,7 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    pub async fn shutdown(&self) -> Result<(), Error> {
+    pub async fn shutdown(&self) -> Result<()> {
         let lua = self.lua()?;
         let globals = lua.globals();
         if let Some(on_shutdown) = globals.get::<Option<LuaFunction>>("on_shutdown")? {
@@ -201,7 +194,7 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    async fn restart_lua(&self, app: &Path) -> Result<(), Error> {
+    async fn restart_lua(&self, app: &Path) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
         Ok(())
@@ -214,11 +207,11 @@ impl Runtime {
         tracker: &TaskTracker,
         app: &Path,
         reload: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<(), eyre::Report> {
         if self.started.load(Ordering::Relaxed) {
             return Ok(());
         }
-        self.start_services(app)?;
+        self.start_services(app).await?;
         if reload {
             self.start_watcher(app, token, tracker).await?;
         }
@@ -229,15 +222,14 @@ impl Runtime {
 
     #[allow(dependency_on_unit_never_type_fallback)]
     #[tracing::instrument(level = "debug", skip(self, app))]
-    async fn new_lua(&self, app: &Path) -> Result<Lua, Error> {
+    async fn new_lua(&self, app: &Path) -> Result<Lua> {
         let services = self.services()?;
         let lua = Lua::new_with(
             LuaStdLib::TABLE
                 | LuaStdLib::STRING
-                | LuaStdLib::UTF8
                 | LuaStdLib::MATH
-                | LuaStdLib::COROUTINE
-                | LuaStdLib::PACKAGE,
+                | LuaStdLib::PACKAGE
+                | LuaStdLib::BIT,
             LuaOptions::default(),
         )?;
 
@@ -247,43 +239,24 @@ impl Runtime {
             package.set("path", parent.join("?.lua").to_string_lossy())?;
         }
 
-        globals.set("sleep", lua.create_async_function(builtin_sleep)?)?;
-        globals.set("spawn", lua.create_async_function(builtin_spawn)?)?;
-        globals.set("timeout", lua.create_async_function(builtin_timeout)?)?;
+        globals.set("warn", lua.create_function(builtin_warn)?)?;
+        globals.set("debug", lua.create_function(builtin_debug)?)?;
+        globals.set("info", lua.create_function(builtin_info)?)?;
+
         globals.set("markdown", lua.create_function(builtin_markdown)?)?;
 
         let json = lua.create_table()?;
         json.set("encode", lua.create_function(json_encode)?)?;
         json.set("decode", lua.create_function(json_decode)?)?;
+        json.set("null", lua.null())?;
         globals.set("json", json)?;
 
         globals.set("global", Global::new(&services.database))?;
-
         globals.set("routes", Routes::new(lua.create_function(not_found)?))?;
         globals.set("database", services.database.clone())?;
         globals.set("template", services.template.clone())?;
         globals.set("null", lua.null())?;
         globals.set("array_mt", lua.array_metatable())?;
-
-        lua.set_warning_function(|_, msg, _| {
-            tracing::warn!("{msg}");
-            Ok(())
-        });
-
-        // lua already has warn, but let's add debug() and info() as well
-        // should work like print(foo, bar) == print(foo .. bar)
-        globals.set(
-            "debug",
-            lua.create_function(|_, args: LuaMultiValue| {
-                let mut buffer = String::new();
-                for arg in args {
-                    let arg = arg.to_string()?;
-                    buffer.push_str(&arg);
-                }
-                tracing::debug!("{buffer}");
-                Ok(())
-            })?,
-        )?;
 
         globals.set(
             "info",
@@ -300,56 +273,40 @@ impl Runtime {
 
         lua.load(LUA_PRELUDE).exec()?;
 
+        channel::register(&lua)?;
+        file::register(&lua)?;
         http::register(&lua)?;
         os::register(&lua)?;
         regex::register(&lua)?;
-        file::register(&lua)?;
-        net::register(&lua)?;
+
+        let db = &services.database;
+        http::set_cookie_key(&lua, db).await?;
 
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;
         Ok(lua)
     }
-
-    pub fn database(&self) -> Result<Database, Error> {
-        Ok(self.services()?.database)
-    }
 }
 
-fn json_encode(_: &Lua, value: LuaValue) -> LuaResult<String> {
+/// json.encode(value, options)
+/// where options is an optional table with a single key `pretty`
+/// if `pretty` is true, the output will be pretty printed (indented)
+fn json_encode(_: &Lua, (value, options): (LuaValue, Option<LuaTable>)) -> LuaResult<String> {
+    let pretty = options
+        .and_then(|options| options.get("pretty").ok())
+        .unwrap_or(false);
+    if pretty {
+        return serde_json::to_string_pretty(&value).map_err(LuaError::external);
+    }
     serde_json::to_string(&value).map_err(LuaError::external)
 }
 
+/// json.decode(value)
+/// where value is a string containing json
+/// returns a lua value
 fn json_decode(lua: &Lua, value: String) -> LuaResult<LuaValue> {
     let value: serde_json::Value = serde_json::from_str(&value).map_err(LuaError::external)?;
     lua.to_value(&value)
-}
-
-async fn builtin_sleep(_lua: Lua, seconds: f64) -> LuaResult<()> {
-    tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
-    Ok(())
-}
-
-async fn builtin_spawn(_lua: Lua, (func, args): (LuaFunction, LuaMultiValue)) -> LuaResult<()> {
-    tokio::spawn(async move {
-        if let Err(err) = func.call_async::<()>(args).await {
-            tracing::error!(?err, "error in spawned task");
-        }
-    });
-    Ok(())
-}
-
-/// timeout(seconds, function)
-async fn builtin_timeout(_lua: Lua, (seconds, func): (f64, LuaFunction)) -> LuaResult<()> {
-    let timeout = tokio::time::sleep(Duration::from_secs_f64(seconds));
-    tokio::select! {
-        _ = timeout => {
-            Err(LuaError::RuntimeError("timeout".to_string()))
-        }
-        _ = func.call_async::<()>(()) => {
-            Ok(())
-        }
-    }
 }
 
 fn builtin_markdown(_lua: &Lua, value: String) -> LuaResult<String> {
@@ -357,4 +314,34 @@ fn builtin_markdown(_lua: &Lua, value: String) -> LuaResult<String> {
         &value,
         &comrak::ComrakOptions::default(),
     ))
+}
+
+fn builtin_warn(_lua: &Lua, args: LuaMultiValue) -> LuaResult<()> {
+    let mut buffer = String::new();
+    for arg in args {
+        let arg = arg.to_string()?;
+        buffer.push_str(&arg);
+    }
+    tracing::warn!("{buffer}");
+    Ok(())
+}
+
+fn builtin_debug(_lua: &Lua, args: LuaMultiValue) -> LuaResult<()> {
+    let mut buffer = String::new();
+    for arg in args {
+        let arg = arg.to_string()?;
+        buffer.push_str(&arg);
+    }
+    tracing::debug!("{buffer}");
+    Ok(())
+}
+
+fn builtin_info(_lua: &Lua, args: LuaMultiValue) -> LuaResult<()> {
+    let mut buffer = String::new();
+    for arg in args {
+        let arg = arg.to_string()?;
+        buffer.push_str(&arg);
+    }
+    tracing::info!("{buffer}");
+    Ok(())
 }

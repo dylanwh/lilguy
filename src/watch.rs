@@ -1,3 +1,4 @@
+use eyre::Context;
 use ignore::Walk;
 use notify::RecursiveMode;
 use notify_debouncer_full::{new_debouncer, DebounceEventHandler, DebounceEventResult};
@@ -67,8 +68,10 @@ pub async fn watch(
     tracker: &TaskTracker,
     app: &Path,
     matchers: Vec<(&'static str, Match)>,
-) -> Receiver<(&'static str, HashSet<PathBuf>)> {
-    let directory = app.canonicalize().expect("canonicalize");
+) -> Result<Receiver<(&'static str, HashSet<PathBuf>)>, eyre::Report> {
+    let directory = app
+        .canonicalize()
+        .wrap_err_with(|| format!("cannot canonicalize {}", app.display()))?;
     let directory = directory.parent().expect("parent").to_path_buf();
 
     let matchers = Matchers(matchers);
@@ -106,7 +109,7 @@ pub async fn watch(
         .instrument(tracing::debug_span!("watcher task")),
     );
 
-    rx
+    Ok(rx)
 }
 
 type Changed = HashMap<&'static str, HashSet<PathBuf>>;

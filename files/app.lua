@@ -27,7 +27,3 @@ routes.not_found = function(req, res)
     })
 end
 
--- routes.websocket = function(req, socket)
---     socket:send("Hello, World!")
---     local msg = socket:recv()
--- end

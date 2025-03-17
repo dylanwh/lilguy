@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use eyre::Result;
 use prettytable::{Cell, Row};
 use rusqlite::types::Value;
 
-use crate::database::{self, Database};
+use crate::database::Database;
 
 #[derive(Debug, Parser)]
 pub struct Query {
@@ -16,14 +17,8 @@ pub struct Query {
     pub query: String,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("database error: {0}")]
-    Database(#[from] database::Error),
-}
-
 impl Query {
-    pub async fn run(self) -> Result<(), Error> {
+    pub async fn run(self) -> Result<()> {
         let db = Database::open(self.app.with_extension("db"))?;
         let query = self.query.clone();
         db.call(move |conn| {
