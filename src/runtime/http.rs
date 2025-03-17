@@ -1,18 +1,22 @@
-use std::ops::Deref;
-
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, HeaderName, HeaderValue},
 };
 use bytes::Bytes;
-use cookie::{Cookie, CookieJar, Key, SameSite};
-use http::Request;
+use cookie::{Cookie, CookieJar, Key};
+use http::{header::ToStrError, Request};
 use mlua::prelude::*;
+use parking_lot::Mutex;
 use reqwest::{Client, Method, RequestBuilder};
+use rusqlite::OptionalExtension;
+use std::{ops::Deref, sync::Arc};
+
+use crate::database::Database;
 
 const FETCH_CLIENT: &str = "fetch_client";
 const REQUEST_MT: &str = "request_mt";
 const RESPONSE_MT: &str = "response_mt";
+const COOKIE_KEY: &str = "cookie_key";
 
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
@@ -34,12 +38,37 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
     lua.set_named_registry_value(RESPONSE_MT, response_mt)?;
 
     globals.set("fetch", lua.create_async_function(fetch)?)?;
-    globals.set("cookies", lua.create_function(cookies)?)?;
 
-    lua.set_named_registry_value(
-        "COOKIE_SECRET",
-        lua.create_userdata(LuaCookieSecret(Key::generate()))?,
-    )?;
+    Ok(())
+}
+
+pub async fn set_cookie_key(lua: &Lua, db: &Database) -> LuaResult<()> {
+    let key = db
+        .call(|conn| {
+            let txn = conn.transaction()?;
+            let key: Option<Vec<u8>> = txn
+                .query_row(
+                    "SELECT value FROM lg_internal WHERE name = 'cookie_key'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(key) = key {
+                Ok(Key::derive_from(&key))
+            } else {
+                let key = Key::try_generate().unwrap();
+                txn.execute(
+                    "INSERT INTO lg_internal (name, value) VALUES ('cookie_key', ?)",
+                    [key.master()],
+                )?;
+                txn.commit()?;
+                Ok(key)
+            }
+        })
+        .await
+        .map_err(LuaError::external)?;
+
+    lua.set_named_registry_value(COOKIE_KEY, LuaCookieKey(key))?;
 
     Ok(())
 }
@@ -86,63 +115,148 @@ impl LuaUserData for LuaHeaders {
     }
 }
 
-pub struct LuaCookies {
-    pub jar: CookieJar,
+pub struct LuaCookieJar {
+    key: Key,
+    jar: Arc<Mutex<CookieJar>>,
     secure: bool,
 }
 
-pub struct LuaCookieSecret(Key);
+impl LuaCookieJar {
+    pub fn new(key: Key, headers: &HeaderMap<HeaderValue>) -> Result<Self, LuaCookieJarError> {
+        let mut jar = CookieJar::new();
+        for cookie in headers.get_all("cookie") {
+            let cookie = cookie.to_str()?.to_owned();
+            let cookie = Cookie::parse(cookie)?;
+            jar.add_original(cookie);
+        }
+        let jar = Mutex::new(jar);
+        let jar = Arc::new(jar);
 
-impl LuaCookieSecret {
-    pub fn key(&self) -> &Key {
-        &self.0
+        Ok(Self {
+            key,
+            jar,
+            secure: false,
+        })
     }
 
-    pub(crate) fn new(key: Key) -> Self {
-        Self(key)
+    pub fn jar(&self) -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, cookie::CookieJar> {
+        self.jar.lock_arc()
     }
 }
 
-impl LuaUserData for LuaCookieSecret {}
+pub struct LuaCookieKey(pub Key);
 
-impl LuaUserData for LuaCookies {
+impl LuaCookieKey {
+    pub fn key(&self) -> Key {
+        self.0.clone()
+    }
+}
+
+impl LuaUserData for LuaCookieKey {}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LuaCookieJarError {
+    #[error("invalid cookie")]
+    InvalidCookie(#[from] cookie::ParseError),
+
+    #[error("invalid header value")]
+    InvalidHeaderValue(#[from] ToStrError),
+}
+
+impl LuaUserData for LuaCookieJar {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method(LuaMetaMethod::Index, |lua, this, key: String| {
-            // we only support signed cookies for now, the signing key is static until release
-            let cookie_secret: LuaUserDataRef<LuaCookieSecret> =
-                lua.named_registry_value("COOKIE_SECRET")?;
-
-            let signed_jar = this.jar.signed(cookie_secret.key());
-            let cookie = signed_jar.get(&key).map(|c| c.value().to_string());
-
+        methods.add_method("get", |_, this, name: String| {
+            let jar = this.jar.lock();
+            let cookie = jar.get(&name).map(|c| c.value().to_string());
             Ok(cookie)
         });
+        methods.add_method("get_signed", |_, this, name: String| {
+            let jar = this.jar.lock();
+            let cookie = jar
+                .signed(&this.key)
+                .get(&name)
+                .map(|c| c.value().to_string());
+            Ok(cookie)
+        });
+        methods.add_method("get_private", |_, this, name: String| {
+            let jar = this.jar.lock();
+            let cookie = jar
+                .private(&this.key)
+                .get(&name)
+                .map(|c| c.value().to_string());
+            Ok(cookie)
+        });
+        methods.add_method("set", |_, this, (name, value): (String, Option<String>)| {
+            let cookie = match value {
+                Some(value) => Cookie::build((name, value))
+                    .same_site(cookie::SameSite::Lax)
+                    .path("/")
+                    .permanent()
+                    .http_only(true)
+                    .secure(this.secure)
+                    .build(),
+                None => Cookie::build(name)
+                    .same_site(cookie::SameSite::Lax)
+                    .path("/")
+                    .permanent()
+                    .http_only(true)
+                    .secure(this.secure)
+                    .removal()
+                    .build(),
+            };
+            let mut jar = this.jar.lock();
+            jar.add(cookie);
+            Ok(())
+        });
 
-        methods.add_meta_method_mut(
-            LuaMetaMethod::NewIndex,
-            |lua, this, (key, value): (String, Option<String>)| {
-                // we only support signed cookies for now, the signing key is static until release
-
-                let cookie_secret: LuaUserDataRef<LuaCookieSecret> =
-                    lua.named_registry_value("COOKIE_SECRET")?;
-                let mut signed_jar = this.jar.signed_mut(cookie_secret.key());
-                if let Some(value) = value {
-                    let cookie = Cookie::build((key, value))
-                        .http_only(true)
-                        .same_site(SameSite::Strict)
+        methods.add_method(
+            "set_signed",
+            |_, this, (name, value): (String, Option<String>)| {
+                let cookie = match value {
+                    Some(value) => Cookie::build((name, value))
+                        .same_site(cookie::SameSite::Lax)
+                        .path("/")
                         .permanent()
-                        .secure(this.secure)
-                        .build();
-                    signed_jar.add(cookie);
-                } else {
-                    let cookie = Cookie::build(key)
                         .http_only(true)
-                        .same_site(SameSite::Strict)
+                        .secure(this.secure)
+                        .build(),
+                    None => Cookie::build(name)
+                        .same_site(cookie::SameSite::Lax)
+                        .path("/")
+                        .permanent()
+                        .http_only(true)
                         .secure(this.secure)
                         .removal()
-                        .build();
-                    this.jar.add(cookie);
+                        .build(),
                 };
+                let mut jar = this.jar.lock();
+                jar.signed_mut(&this.key).add(cookie);
+                Ok(())
+            },
+        );
+
+        methods.add_method(
+            "set_private",
+            |_, this, (name, value): (String, Option<String>)| {
+                let cookie = match value {
+                    Some(value) => Cookie::build((name, value))
+                        .same_site(cookie::SameSite::Lax)
+                        .path("/")
+                        .permanent()
+                        .http_only(true)
+                        .secure(this.secure)
+                        .build(),
+                    None => Cookie::build(name)
+                        .same_site(cookie::SameSite::Lax)
+                        .path("/")
+                        .permanent()
+                        .http_only(true)
+                        .secure(this.secure)
+                        .removal()
+                        .build(),
+                };
+                let mut jar = this.jar.lock();
+                jar.private_mut(&this.key).add(cookie);
                 Ok(())
             },
         );
@@ -191,12 +305,6 @@ async fn fetch(lua: Lua, (url, options): (String, Option<LuaTable>)) -> LuaResul
     Ok(res)
 }
 
-pub fn cookies(_: &Lua, secure: bool) -> Result<LuaCookies, LuaError> {
-    let jar = CookieJar::new();
-    let cookies = LuaCookies { jar, secure };
-    Ok(cookies)
-}
-
 pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTable, LuaError> {
     let (parts, body) = request.into_parts();
     let req = lua.create_table()?;
@@ -208,13 +316,11 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
         .unwrap_or("")
         .to_owned();
 
-    let mut jar = CookieJar::new();
-    for cookie in parts.headers.get_all("cookie") {
-        let cookie = cookie.to_str().map_err(LuaError::external)?.to_string();
-        let cookie = Cookie::parse(cookie).map_err(LuaError::external)?;
-        jar.add_original(cookie);
-    }
-    let cookies = lua.create_userdata(LuaCookies { jar, secure: false })?;
+    let key = lua
+        .named_registry_value::<LuaUserDataRef<LuaCookieKey>>(COOKIE_KEY)?
+        .key();
+    let cookie_jar =
+        lua.create_userdata(LuaCookieJar::new(key, &parts.headers).map_err(LuaError::external)?)?;
     let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
     let body = to_bytes(body, 1024 * 1024 * 16)
         .await
@@ -226,7 +332,7 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
     let query: serde_json::Map<String, serde_json::Value> =
         serde_qs::from_str(parts.uri.query().unwrap_or("")).map_err(LuaError::external)?;
     req.set("query", lua.to_value(&query)?)?;
-    req.set("cookies", &cookies)?;
+    req.set("_cookie_jar", &cookie_jar)?;
 
     match content_type.as_str() {
         "application/x-www-form-urlencoded" => {
@@ -306,4 +412,3 @@ impl Deref for FetchClient {
 }
 
 impl LuaUserData for FetchClient {}
-

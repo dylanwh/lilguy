@@ -6,26 +6,21 @@ function array(t)
     return t
 end
 
--- re-implement ipairs using using pure lua to avoid problems with crossing C boundaries
-function ipairs(t)
-    -- lua 5.4 removed the __ipairs metamethod but it would be useful for performance
-    -- so we'll just implement it ourselves
-    -- TODO: actually use this for global tables
-    local mt = getmetatable(t)
-    if mt and mt.__ipairs then
-        return mt.__ipairs(t)
-    end
+commands = {}
 
-    local i = 0
-    return function(a, b, c, d)
-        i = i + 1
-        if t[i] then
-            return i, t[i]
-        end
-    end
+Request = {}
+
+function Request:cookie(name)
+    return self._cookie_jar:get(name)
 end
 
-commands = {}
+function Request:signed_cookie(name)
+    return self._cookie_jar:get_signed(name)
+end
+
+function Request:private_cookie(name)
+    return self._cookie_jar:get_private(name)
+end
 
 Response = {}
 
@@ -52,6 +47,18 @@ function Response:json(data)
     self.body = json.encode(data)
 end
 
+function Response:set_cookie(name, value)
+    self._cookie_jar:set(name, value)
+end
+
+function Response:set_signed_cookie(name, value)
+    self._cookie_jar:set_signed(name, value)
+end
+
+function Response:set_private_cookie(name, value)
+    self._cookie_jar:set_private(name, value)
+end
+
 
 function head(n, iter)
     local i = 0
@@ -63,30 +70,10 @@ function head(n, iter)
     end
 end
 
-function collect(iter)
+function collect(...)
     local t = {}
-    for v in iter do
+    for v in ... do
         table.insert(t, v)
     end
     return array(t)
-end
-
-function map(f, iter)
-    return function()
-        local v = iter()
-        if v == nil then
-            return nil
-        end
-        return f(v)
-    end
-end
-
-function filter(f, iter)
-    return function()
-        local v
-        repeat
-            v = iter()
-        until v == nil or f(v)
-        return v
-    end
 end

@@ -9,7 +9,6 @@ use tokio::{
 };
 use walkdir::{DirEntry, WalkDir};
 
-
 pub fn register(lua: &Lua) -> LuaResult<()> {
     let file = lua.create_table()?;
     file.set("open", lua.create_async_function(file_open)?)?;
@@ -33,7 +32,6 @@ pub struct LuaFile {
 
 impl LuaUserData for LuaFile {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-
         methods.add_async_method_mut("write", |_, mut this, args: LuaMultiValue| async move {
             let mut buf = Vec::new();
             for arg in args {
@@ -82,7 +80,11 @@ impl LuaUserData for LuaFile {
         });
 
         methods.add_async_method_mut("close", |_, mut this, _: ()| async move {
-            this.file.get_mut().shutdown().await.map_err(LuaError::external)?;
+            this.file
+                .get_mut()
+                .shutdown()
+                .await
+                .map_err(LuaError::external)?;
             Ok(())
         });
 

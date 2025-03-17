@@ -8,11 +8,10 @@ use axum::{
 };
 use bytes::Bytes;
 use clap::Parser;
-use cookie::Key;
-use eyre::{Context, ContextCompat, Result};
+use eyre::Result;
 use mlua::prelude::*;
 use std::{path::PathBuf, time::Duration};
-use tokio::{io::AsyncWriteExt, net::TcpListener, time::sleep};
+use tokio::{net::TcpListener, time::sleep};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tower_http::{
     services::ServeDir,
@@ -26,9 +25,7 @@ use crate::{
     repl,
     routes::Routes,
     runtime::{
-        http::{
-            create_request, new_response, LuaCookieSecret, LuaCookies, LuaHeaders,
-        },
+        http::{create_request, new_response, LuaCookieJar, LuaHeaders},
         Runtime,
     },
     Output,
@@ -73,19 +70,6 @@ impl Serve {
         runtime
             .start(token, tracker, &self.app, !self.no_reload)
             .await?;
-
-        let lua = runtime.lua()?;
-        let cookie_secret = self.app.with_file_name("cookie_secret");
-        let key = if cookie_secret.exists() {
-            let key = tokio::fs::read(&cookie_secret).await?;
-            Key::try_from(&key[..]).wrap_err("could not read cookie secret")?
-        } else {
-            let key = Key::try_generate().wrap_err("could not generate cookie secret")?;
-            let mut file = tokio::fs::File::create(&cookie_secret).await?;
-            file.write_all(key.master().as_ref()).await?;
-            key
-        };
-        lua.set_named_registry_value("COOKIE_SECRET", LuaCookieSecret::new(key))?;
 
         let assets_dir = self.app.with_file_name("assets");
 
@@ -176,7 +160,7 @@ async fn handle_request(
     req.set("params", params)?;
 
     let res = new_response(&lua)?;
-    res.set("cookies", req.get::<LuaAnyUserData>("cookies")?)?;
+    res.set("_cookie_jar", req.get::<LuaAnyUserData>("_cookie_jar")?)?;
 
     handler.call_async::<()>((req, &res)).await?;
 
@@ -200,10 +184,10 @@ impl IntoResponse for LuaResponse {
             .unwrap_or_default();
         let cookies = self
             .res
-            .get::<LuaAnyUserData>("cookies")
-            .and_then(|cookies| cookies.take::<LuaCookies>());
+            .get::<LuaAnyUserData>("_cookie_jar")
+            .and_then(|cookies| cookies.take::<LuaCookieJar>());
         if let Ok(cookies) = cookies {
-            for cookie in cookies.jar.delta() {
+            for cookie in cookies.jar().delta() {
                 let Ok(value) = cookie.to_string().parse() else {
                     continue;
                 };

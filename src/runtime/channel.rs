@@ -17,14 +17,10 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
     Ok(())
 }
 
-fn channel_broadast(
-    lua: &Lua,
-    capacity: usize,
-) -> LuaResult<(LuaAnyUserData, LuaAnyUserData)> {
+fn channel_broadast(lua: &Lua, capacity: usize) -> LuaResult<(LuaAnyUserData, LuaAnyUserData)> {
     let (tx, rx) = broadcast::channel(capacity);
     let tx = lua.create_userdata(LuaBroadcastSender { tx })?;
     let rx = lua.create_userdata(LuaBroadcastReceiver { rx })?;
-
 
     Ok((tx, rx))
 }

@@ -27,6 +27,7 @@ use crate::{
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
+const SQL_SCHEMA: &str = include_str!("schema.sql");
 
 #[derive(Debug, Clone, Default)]
 pub struct Runtime {
@@ -78,14 +79,25 @@ impl Runtime {
     }
 
     #[tracing::instrument(level = "debug", skip(self, app))]
-    pub fn start_services(&self, app: &Path) -> Result<()> {
-        let mut services = self.services.lock();
-
-        if services.is_none() {
-            let database = Database::open(app.with_extension("db"))?;
-            let template = Template::new(app.with_file_name("templates"));
-            services.replace(Services { database, template });
+    pub async fn start_services(&self, app: &Path) -> Result<()> {
+        let db;
+        {
+            let mut services = self.services.lock();
+            if services.is_none() {
+                let database = Database::open(app.with_extension("db"))?;
+                let template = Template::new(app.with_file_name("templates"));
+                db = database.clone();
+                services.replace(Services { database, template });
+            } else {
+                db = services.as_ref().expect("services").database.clone();
+            }
         }
+
+        db.call(|conn| {
+            conn.execute_batch(SQL_SCHEMA)?;
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
@@ -199,7 +211,7 @@ impl Runtime {
         if self.started.load(Ordering::Relaxed) {
             return Ok(());
         }
-        self.start_services(app)?;
+        self.start_services(app).await?;
         if reload {
             self.start_watcher(app, token, tracker).await?;
         }
@@ -230,7 +242,6 @@ impl Runtime {
         globals.set("warn", lua.create_function(builtin_warn)?)?;
         globals.set("debug", lua.create_function(builtin_debug)?)?;
         globals.set("info", lua.create_function(builtin_info)?)?;
-
 
         globals.set("markdown", lua.create_function(builtin_markdown)?)?;
 
@@ -268,11 +279,13 @@ impl Runtime {
         os::register(&lua)?;
         regex::register(&lua)?;
 
+        let db = &services.database;
+        http::set_cookie_key(&lua, db).await?;
+
         let require = globals.get::<LuaFunction>("require")?;
         require.call_async("app").await?;
         Ok(lua)
     }
-
 }
 
 /// json.encode(value, options)
