@@ -1,3 +1,3 @@
-[submodule "third-party/pico"]
+[submodule "vendor/pico"]
 	path = vendor/pico
 	url = https://github.com/picocss/pico
