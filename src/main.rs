@@ -10,7 +10,7 @@ use eyre::Result;
 use mimalloc::MiMalloc;
 use parking_lot::Mutex;
 use reedline::ExternalPrinter;
-use std::{io::IsTerminal, process::exit, sync::Arc, time::Duration};
+use std::{io::IsTerminal, sync::Arc, time::Duration};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing_subscriber::{fmt::MakeWriter, EnvFilter};
 
