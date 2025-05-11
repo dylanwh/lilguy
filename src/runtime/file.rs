@@ -1,11 +1,13 @@
 // this is an async implementation of the `io` module
 
 use mlua::prelude::*;
-use std::{io::SeekFrom, path::Path};
+use parking_lot::Mutex;
+use std::{io::SeekFrom, path::Path, sync::Arc};
 use tempfile::{NamedTempFile, TempPath};
 use tokio::{
     fs::File,
     io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
+    sync::{mpsc, oneshot},
 };
 use walkdir::{DirEntry, WalkDir};
 
@@ -26,13 +28,111 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
     Ok(())
 }
 
+enum Message {
+    Write(Vec<u8>),
+    ReadExact(usize),
+    ReadLine,
+    ReadUntil(u8),
+    ReadToEnd,
+    Seek(SeekFrom),
+    Flush,
+    Close,
+}
+
+type Reply = LuaResult<LuaValue>;
+
 pub struct LuaFile {
-    file: BufReader<File>,
+    tx: mpsc::Sender<(Message, oneshot::Sender<Reply>)>,
+}
+
+fn read_helper(lua: &Lua, result: std::io::Result<usize>, buffer: Vec<u8>) -> LuaResult<LuaValue> {
+    result.into_lua_err().and_then(|len| {
+        if len > 0 {
+            lua.create_string(buffer).map(LuaValue::String)
+        } else {
+            Ok(LuaValue::Nil)
+        }
+    })
+}
+
+async fn file_actor(
+    lua: Lua,
+    file: File,
+    mut rx: mpsc::Receiver<(Message, oneshot::Sender<Reply>)>,
+) {
+    let mut file = BufReader::new(file);
+
+    while let Some((msg, reply)) = rx.recv().await {
+        let res = match msg {
+            Message::Write(src) => file
+                .get_mut()
+                .write_all(&src)
+                .await
+                .map(|_| LuaValue::Nil)
+                .map_err(LuaError::external),
+            Message::ReadExact(len) => {
+                let mut buf = vec![0; len];
+                read_helper(&lua, file.read_exact(&mut buf).await, buf)
+            }
+            Message::ReadLine => {
+                let mut buf = Vec::new();
+                read_helper(&lua, file.read_until(b'\n', &mut buf).await, buf)
+            }
+            Message::ReadUntil(end) => {
+                let mut buf = Vec::new();
+                read_helper(&lua, file.read_until(end, &mut buf).await, buf)
+            }
+            Message::ReadToEnd => {
+                let mut buf = Vec::new();
+                read_helper(&lua, file.read_to_end(&mut buf).await, buf)
+            }
+            Message::Seek(whence) => file
+                .seek(whence)
+                .await
+                .into_lua_err()
+                .and_then(|pos| lua.to_value(&pos)),
+            Message::Flush => file.flush().await.into_lua_err().map(|_| LuaValue::Nil),
+            Message::Close => {
+                if let Err(_) = reply.send(Ok(LuaValue::Boolean(true))) {
+                    tracing::error!("error replying in LuaFile actor at close");
+                }
+                break;
+            }
+        };
+        if let Err(_) = reply.send(res) {
+            tracing::error!("error replying in LuaFile actor")
+        }
+    }
+}
+
+impl LuaFile {
+    async fn spawn(lua: Lua, file: File) -> LuaFile {
+        let (tx, rx) = mpsc::channel(1);
+
+        tokio::spawn(async move {
+            file_actor(lua, file, rx).await;
+        });
+
+        LuaFile { tx }
+    }
+
+    async fn send(&self, msg: Message) -> Reply {
+        let (send_reply, reply) = oneshot::channel();
+        self.tx
+            .send((msg, send_reply))
+            .await
+            .map_err(|_| LuaError::runtime("error sending message to file actor"))?;
+
+        match reply.await.map_err(LuaError::external) {
+            Ok(r) => r,
+            Err(e) => Err(e),
+        }
+    }
 }
 
 impl LuaUserData for LuaFile {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_async_method_mut("write", |_, mut this, args: LuaMultiValue| async move {
+        methods.add_async_method("write", |_, this, args: LuaMultiValue| async move {
             let mut buf = Vec::new();
             for arg in args {
                 match arg {
@@ -42,50 +142,32 @@ impl LuaUserData for LuaFile {
                     _ => return Err(LuaError::external("invalid argument")),
                 }
             }
-            this.file.get_mut().write_all(&buf).await?;
 
-            Ok(())
+            this.send(Message::Write(buf)).await
         });
 
-        methods.add_async_method_mut("read_exact", |_, mut this, len: usize| async move {
-            let mut buf = Vec::with_capacity(len);
-            this.file
-                .read_exact(&mut buf)
-                .await
-                .map_err(LuaError::external)?;
-            Ok(buf)
+        methods.add_async_method("read_exact", |_, this, len: usize| async move {
+            this.send(Message::ReadExact(len)).await
         });
 
-        methods.add_async_method_mut("read_line", |lua, mut this, _: ()| async move {
-            let mut buf = Vec::new();
-            this.file.read_until(b'\n', &mut buf).await?;
-            lua.create_string(&buf)
+        methods.add_async_method("read_line", |_lua, this, _: ()| async move {
+            this.send(Message::ReadLine).await
         });
 
-        methods.add_async_method_mut("read_until", |lua, mut this, byte: u8| async move {
-            let mut buf = Vec::new();
-            this.file.read_until(byte, &mut buf).await?;
-            lua.create_string(&buf)
+        methods.add_async_method("read_until", |_lua, this, byte: u8| async move {
+            this.send(Message::ReadUntil(byte)).await
         });
 
-        methods.add_async_method_mut("read_to_end", |lua, mut this, _: ()| async move {
-            let mut buf = Vec::new();
-            this.file.read_to_end(&mut buf).await?;
-            lua.create_string(&buf)
+        methods.add_async_method("read_to_end", |_lua, this, _: ()| async move {
+            this.send(Message::ReadToEnd).await
         });
 
-        methods.add_async_method_mut("flush", |_, mut this, _: ()| async move {
-            this.file.get_mut().flush().await?;
-            Ok(())
+        methods.add_async_method("flush", |_, this, _: ()| async move {
+            this.send(Message::Flush).await
         });
 
-        methods.add_async_method_mut("close", |_, mut this, _: ()| async move {
-            this.file
-                .get_mut()
-                .shutdown()
-                .await
-                .map_err(LuaError::external)?;
-            Ok(())
+        methods.add_async_method("close", |_, this, _: ()| async move {
+            this.send(Message::Close).await
         });
 
         // Sets and gets the file position, measured from the beginning of the file, to the position given by offset plus a base specified by the string whence, as follows:
@@ -100,17 +182,16 @@ impl LuaUserData for LuaFile {
         // call file:seek("set") sets the position to the beginning of the file (and
         // returns 0); and the call file:seek("end") sets the position to the end of the
         // file, and returns its size.
-        methods.add_async_method_mut(
+        methods.add_async_method(
             "seek",
-            |_, mut this, (whence, offset): (Option<String>, Option<i64>)| async move {
+            |_, this, (whence, offset): (Option<String>, Option<i64>)| async move {
                 let whence = match whence.as_deref() {
                     Some("set") => SeekFrom::Start(offset.unwrap_or(0) as u64),
-                    Some("cur") => SeekFrom::Current(offset.unwrap_or(0)),
+                    Some("cur") | None => SeekFrom::Current(offset.unwrap_or(0)),
                     Some("end") => SeekFrom::End(offset.unwrap_or(0)),
-                    _ => return Err(LuaError::external("invalid whence")),
+                    _ => return Err(LuaError::external("invalid whence: must be set, cur, or end. default is cur")),
                 };
-                let pos = this.file.seek(whence).await?;
-                Ok(pos as i64)
+                this.send(Message::Seek(whence)).await
             },
         );
     }
@@ -169,9 +250,7 @@ async fn file_open(
         _ => return Err(LuaError::external("invalid mode")),
     };
 
-    lua.create_userdata(LuaFile {
-        file: BufReader::new(file),
-    })
+    lua.create_userdata(LuaFile::spawn(lua.clone(), file).await)
 }
 
 /// Checks whether obj is a valid file handle.
@@ -180,7 +259,7 @@ async fn file_open(
 /// closed file handle, or nil if obj is not a file handle.
 fn file_type(_lua: &Lua, value: LuaValue) -> LuaResult<String> {
     match value {
-        LuaValue::UserData(ud) if ud.is::<LuaFile>() => Ok("file".to_string()),
+        LuaValue::UserData(ud) if ud.is::<Arc<Mutex<LuaFile>>>() => Ok("file".to_string()),
         _ => Ok("nil".to_string()),
     }
 }

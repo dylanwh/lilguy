@@ -4,6 +4,7 @@ pub mod file;
 pub mod http;
 pub mod os;
 pub mod regex;
+pub mod task;
 
 use eyre::{eyre, Result};
 use http::not_found;
@@ -278,6 +279,7 @@ impl Runtime {
         http::register(&lua)?;
         os::register(&lua)?;
         regex::register(&lua)?;
+        task::register(&lua)?;
 
         let db = &services.database;
         http::set_cookie_key(&lua, db).await?;
