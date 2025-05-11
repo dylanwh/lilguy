@@ -131,8 +131,6 @@ impl Runtime {
         .await?;
 
         let app = directory.to_path_buf();
-        let restart_tracker = tracker.clone();
-        let restart_token = token.clone();
         tracker.spawn(async move {
             while let Some((name, _changes)) = rx.recv().await {
                 tracing::debug!("reload {name}");
