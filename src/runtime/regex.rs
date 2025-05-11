@@ -18,7 +18,7 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
 }
 
 fn regex_new(_lua: &Lua, pattern: String) -> LuaResult<LuaRegex> {
-    let regex = regex::Regex::new(&pattern).map_err(LuaError::external)?;
+    let regex = regex::Regex::new(&pattern).into_lua_err()?;
     Ok(LuaRegex { regex })
 }
 

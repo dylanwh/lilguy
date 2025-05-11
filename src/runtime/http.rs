@@ -24,7 +24,7 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
     let client = Client::builder()
         .user_agent(format!("lilguy/{}", env!("CARGO_PKG_VERSION")))
         .build()
-        .map_err(LuaError::external)?;
+        .into_lua_err()?;
     let fetch_client = FetchClient::from(client);
     lua.set_named_registry_value(FETCH_CLIENT, fetch_client)?;
 
@@ -66,7 +66,7 @@ pub async fn set_cookie_key(lua: &Lua, db: &Database) -> LuaResult<()> {
             }
         })
         .await
-        .map_err(LuaError::external)?;
+        .into_lua_err()?;
 
     lua.set_named_registry_value(COOKIE_KEY, LuaCookieKey(key))?;
 
@@ -277,7 +277,7 @@ async fn fetch(lua: Lua, (url, options): (String, Option<LuaTable>)) -> LuaResul
             let method = options
                 .get::<Option<String>>("method")?
                 .unwrap_or("get".to_string());
-            let method = Method::from_bytes(method.as_bytes()).map_err(LuaError::external)?;
+            let method = Method::from_bytes(method.as_bytes()).into_lua_err()?;
             let mut request = client.request(method, &url);
             if let Some(headers) = options.get::<Option<LuaTable>>("headers")? {
                 let headers = headers
@@ -285,8 +285,8 @@ async fn fetch(lua: Lua, (url, options): (String, Option<LuaTable>)) -> LuaResul
                     .map(|(pair)| {
                         let (key, value) = pair?;
                         Ok((
-                            HeaderName::from_bytes(key.as_bytes()).map_err(LuaError::external)?,
-                            HeaderValue::from_str(&value).map_err(LuaError::external)?,
+                            HeaderName::from_bytes(key.as_bytes()).into_lua_err()?,
+                            HeaderValue::from_str(&value).into_lua_err()?,
                         ))
                     })
                     .collect::<LuaResult<HeaderMap>>()?;
@@ -299,7 +299,7 @@ async fn fetch(lua: Lua, (url, options): (String, Option<LuaTable>)) -> LuaResul
         }
         None => client.get(&url),
     };
-    let response = request.send().await.map_err(LuaError::external)?;
+    let response = request.send().await.into_lua_err()?;
     let res = create_fetch_response(&lua, response).await?;
 
     Ok(res)
@@ -319,25 +319,21 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
     let key = lua
         .named_registry_value::<LuaUserDataRef<LuaCookieKey>>(COOKIE_KEY)?
         .key();
-    let cookie_jar =
-        lua.create_userdata(LuaCookieJar::new(key, &parts.headers).map_err(LuaError::external)?)?;
+    let cookie_jar = lua.create_userdata(LuaCookieJar::new(key, &parts.headers).into_lua_err()?)?;
     let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
-    let body = to_bytes(body, 1024 * 1024 * 16)
-        .await
-        .map_err(LuaError::external)?;
+    let body = to_bytes(body, 1024 * 1024 * 16).await.into_lua_err()?;
 
     req.set("method", method)?;
     req.set("headers", headers)?;
     req.set("path", parts.uri.path())?;
     let query: serde_json::Map<String, serde_json::Value> =
-        serde_qs::from_str(parts.uri.query().unwrap_or("")).map_err(LuaError::external)?;
+        serde_qs::from_str(parts.uri.query().unwrap_or("")).into_lua_err()?;
     req.set("query", lua.to_value(&query)?)?;
     req.set("cookie_jar", &cookie_jar)?;
 
     match content_type.as_str() {
         "application/x-www-form-urlencoded" => {
-            let body: serde_json::Value =
-                serde_urlencoded::from_bytes(&body).map_err(LuaError::external)?;
+            let body: serde_json::Value = serde_urlencoded::from_bytes(&body).into_lua_err()?;
             req.set("body", lua.to_value(&body)?)
         }
         _ => req.set("body", lua.create_string(&body)?),
@@ -377,9 +373,7 @@ pub async fn create_response(
     let res = lua.create_table()?;
     let status = parts.status.as_u16();
     let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
-    let body = to_bytes(body, 1024 * 1024 * 16)
-        .await
-        .map_err(LuaError::external)?;
+    let body = to_bytes(body, 1024 * 1024 * 16).await.into_lua_err()?;
 
     res.set("status", status)?;
     res.set("headers", headers)?;

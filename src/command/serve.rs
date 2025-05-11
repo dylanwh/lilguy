@@ -182,12 +182,12 @@ impl IntoResponse for LuaResponse {
             .map(|headers| headers.into_inner())
             .ok()
             .unwrap_or_default();
-        let cookies = self
+        let cookie_jar = self
             .res
             .get::<LuaAnyUserData>("cookie_jar")
             .and_then(|cookies| cookies.take::<LuaCookieJar>());
-        if let Ok(cookies) = cookies {
-            for cookie in cookies.jar().delta() {
+        if let Ok(cookie_jar) = cookie_jar {
+            for cookie in cookie_jar.jar().delta() {
                 let Ok(value) = cookie.to_string().parse() else {
                     continue;
                 };

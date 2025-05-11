@@ -80,7 +80,7 @@ impl LuaUserData for Template {
                     Ok(rendered)
                 })
                 .await
-                .map_err(mlua::Error::external)
+                .into_lua_err()
             },
         );
     }

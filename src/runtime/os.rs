@@ -42,7 +42,7 @@ async fn os_execute(_lua: Lua, command: String) -> LuaResult<(Option<bool>, Stri
         .arg(&command)
         .output()
         .await
-        .map_err(LuaError::external)?;
+        .into_lua_err()?;
 
     let status = output.status;
     let exit = status.code();
@@ -59,7 +59,7 @@ async fn os_execute(_lua: Lua, command: String) -> LuaResult<(Option<bool>, Stri
         .arg(&command)
         .output()
         .await
-        .map_err(LuaError::external)?;
+        .into_lua_err()?;
 
     let status = output.status;
     let signal = status.signal();

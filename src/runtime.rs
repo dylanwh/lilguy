@@ -139,10 +139,7 @@ impl Runtime {
                 match name {
                     "runtime" => {
                         tracing::info!("restarting runtime");
-                        if let Err(err) = runtime
-                            .restart_lua(&app)
-                            .await
-                        {
+                        if let Err(err) = runtime.restart_lua(&app).await {
                             tracing::error!(?err, "error restarting runtime");
                         }
                     }
@@ -195,15 +192,11 @@ impl Runtime {
             on_shutdown.call_async::<()>(()).await?;
         }
 
-
         Ok(())
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    async fn restart_lua(
-        &self,
-        app: &Path,
-    ) -> Result<()> {
+    async fn restart_lua(&self, app: &Path) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
         Ok(())
@@ -292,16 +285,16 @@ fn json_encode(_: &Lua, (value, options): (LuaValue, Option<LuaTable>)) -> LuaRe
         .and_then(|options| options.get("pretty").ok())
         .unwrap_or(false);
     if pretty {
-        return serde_json::to_string_pretty(&value).map_err(LuaError::external);
+        return serde_json::to_string_pretty(&value).into_lua_err();
     }
-    serde_json::to_string(&value).map_err(LuaError::external)
+    serde_json::to_string(&value).into_lua_err()
 }
 
 /// json.decode(value)
 /// where value is a string containing json
 /// returns a lua value
 fn json_decode(lua: &Lua, value: String) -> LuaResult<LuaValue> {
-    let value: serde_json::Value = serde_json::from_str(&value).map_err(LuaError::external)?;
+    let value: serde_json::Value = serde_json::from_str(&value).into_lua_err()?;
     lua.to_value(&value)
 }
 

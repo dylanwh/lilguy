@@ -28,7 +28,7 @@ fn channel_broadast(lua: &Lua, capacity: usize) -> LuaResult<(LuaAnyUserData, Lu
 impl LuaUserData for LuaBroadcastSender {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("send", |_, this, value: LuaValue| {
-            this.tx.send(value).map_err(LuaError::external)?;
+            this.tx.send(value).into_lua_err()?;
             Ok(())
         });
         methods.add_method("subscribe", |lua, this, _: ()| {
@@ -41,7 +41,7 @@ impl LuaUserData for LuaBroadcastSender {
 impl LuaUserData for LuaBroadcastReceiver {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_method_mut("recv", |_, mut this, _: ()| async move {
-            this.rx.recv().await.map_err(LuaError::external)
+            this.rx.recv().await.into_lua_err()
         });
     }
 }

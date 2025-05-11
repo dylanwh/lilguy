@@ -54,7 +54,7 @@ pub async fn start(
             }
             line.push_str(&arg.to_string()?);
         }
-        lua_printer.print(line).map_err(mlua::Error::external)?;
+        lua_printer.print(line).into_lua_err()?;
         Ok(())
     })?;
     globals.set("print", print)?;

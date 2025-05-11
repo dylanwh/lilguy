@@ -69,7 +69,7 @@ async fn file_actor(
                 .write_all(&src)
                 .await
                 .map(|_| LuaValue::Nil)
-                .map_err(LuaError::external),
+                .into_lua_err(),
             Message::ReadExact(len) => {
                 let mut buf = vec![0; len];
                 read_helper(&lua, file.read_exact(&mut buf).await, buf)
@@ -123,7 +123,7 @@ impl LuaFile {
             .await
             .map_err(|_| LuaError::runtime("error sending message to file actor"))?;
 
-        match reply.await.map_err(LuaError::external) {
+        match reply.await.into_lua_err() {
             Ok(r) => r,
             Err(e) => Err(e),
         }
@@ -273,7 +273,7 @@ async fn file_read(lua: Lua, filename: LuaValue) -> LuaResult<LuaString> {
     let filename = filename.to_string()?;
     let data = tokio::fs::read(filename)
         .await
-        .map_err(LuaError::external)?;
+        .into_lua_err()?;
 
     lua.create_string(&data)
 }
@@ -283,14 +283,14 @@ async fn file_write(_lua: Lua, (filename, data): (LuaValue, LuaString)) -> LuaRe
 
     tokio::fs::write(filename, data.as_bytes())
         .await
-        .map_err(LuaError::external)
+        .into_lua_err()
 }
 
 async fn file_rename(_lua: Lua, (old, new): (LuaValue, LuaValue)) -> LuaResult<()> {
     let (old, new) = (old.to_string()?, new.to_string()?);
     tokio::fs::rename(old, new)
         .await
-        .map_err(LuaError::external)
+        .into_lua_err()
 }
 
 async fn file_exists(_lua: Lua, filename: LuaValue) -> LuaResult<bool> {
@@ -311,19 +311,19 @@ async fn file_exists(_lua: Lua, filename: LuaValue) -> LuaResult<bool> {
 async fn create_dir(_lua: Lua, path: String) -> LuaResult<()> {
     tokio::fs::create_dir(path)
         .await
-        .map_err(LuaError::external)
+        .into_lua_err()
 }
 
 async fn create_dir_al(_lua: Lua, path: String) -> LuaResult<()> {
     tokio::fs::create_dir_all(path)
         .await
-        .map_err(LuaError::external)
+        .into_lua_err()
 }
 
 async fn file_remove(_lua: Lua, filename: String) -> LuaResult<()> {
     tokio::fs::remove_file(filename)
         .await
-        .map_err(LuaError::external)
+        .into_lua_err()
 }
 
 pub struct LuaTempFile {
@@ -370,7 +370,7 @@ impl LuaUserData for LuaTempFile {
 fn file_temp(lua: &Lua, _args: LuaValue) -> LuaResult<LuaAnyUserData> {
     let path = NamedTempFile::new()
         .map(|f| f.into_temp_path())
-        .map_err(LuaError::external)?;
+        .into_lua_err()?;
 
     lua.create_userdata(LuaTempFile { file: Some(path) })
 }
@@ -424,7 +424,7 @@ impl LuaUserData for LuaWalkDir {
         methods.add_meta_method_mut(LuaMetaMethod::Call, |lua, this, ()| {
             // make sure tokio has time to run
 
-            let entry = this.iter.next().transpose().map_err(LuaError::external)?;
+            let entry = this.iter.next().transpose().into_lua_err()?;
             let mut ret = LuaMultiValue::new();
             if let Some(entry) = entry {
                 let path = create_string_from_path(lua, entry.path())?;

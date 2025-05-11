@@ -316,7 +316,7 @@ impl LuaUserData for GlobalTablePairs<serde_json::Value> {
                 .recv()
                 .await
                 .transpose()
-                .map_err(LuaError::external)?;
+                .into_lua_err()?;
             let mut mv = LuaMultiValue::new();
 
             match value {
@@ -350,7 +350,7 @@ impl LuaUserData for Global {
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(LuaMetaMethod::Index, |_lua, this, key: String| {
             let table = GlobalTable::new(key, this.database.clone());
-            block_in_place(|| table.create().map_err(LuaError::external))?;
+            block_in_place(|| table.create().into_lua_err())?;
             Ok(table)
         });
 
@@ -360,7 +360,7 @@ impl LuaUserData for Global {
             |_, this, (key, value): (String, LuaValue)| async move {
                 if value.is_nil() {
                     let table = GlobalTable::new(key, this.database.clone());
-                    table.destroy().await.map_err(LuaError::external)?;
+                    table.destroy().await.into_lua_err()?;
                     return Ok(());
                 }
                 Err(LuaError::external("cannot set value on global"))
@@ -375,7 +375,7 @@ impl LuaUserData for GlobalTable {
             LuaMetaMethod::Index,
             |lua, this, key: LuaValue| async move {
                 let value: Option<serde_json::Value> =
-                    this.get(key).await.map_err(LuaError::external)?;
+                    this.get(key).await.into_lua_err()?;
                 if let Some(ref value) = value {
                     Ok(lua.to_value(value)?)
                 } else {
@@ -392,16 +392,16 @@ impl LuaUserData for GlobalTable {
                     key => GlobalTableKey::from(key.to_string()?),
                 };
                 if value.is_nil() {
-                    this.del(key).await.map_err(LuaError::external)?;
+                    this.del(key).await.into_lua_err()?;
                     return Ok(());
                 }
-                this.set(key, value).await.map_err(LuaError::external)?;
+                this.set(key, value).await.into_lua_err()?;
                 Ok(())
             },
         );
 
         methods.add_async_meta_method(LuaMetaMethod::Len, |_, this, ()| async move {
-            let len = this.len().await.map_err(LuaError::external)?;
+            let len = this.len().await.into_lua_err()?;
             Ok(len as i64)
         });
     }
