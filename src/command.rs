@@ -81,7 +81,7 @@ impl Args {
     ) -> Result<()> {
         let config = Arc::new(self.read_config().await?);
 
-        self.command.run(token, tracker, config, output).await
+        self.command.run(tracker, token, config, output).await
     }
 }
 
@@ -107,8 +107,8 @@ impl Command {
     #[tracing::instrument(level = "debug")]
     async fn run(
         self,
-        token: CancellationToken,
         tracker: TaskTracker,
+        token: CancellationToken,
         config: Arc<Config>,
         output: Output,
     ) -> Result<()> {
@@ -118,22 +118,19 @@ impl Command {
                 token.cancel();
             }
             Command::Serve(serve) => {
-                serve.run(&token, &tracker, &config, &output).await?;
+                serve.run(&tracker, &token, &config, &output).await?;
             }
             Command::Run(run) => {
-                run.run(&token, &tracker).await?;
+                run.run(&tracker, &token).await?;
                 token.cancel();
             }
             Command::Query(query) => {
                 query.run().await?;
             }
             Command::Shell(shell) => {
-                shell.run(&token, &tracker, &config, &output).await?;
+                shell.run(&tracker, &token, &config, &output).await?;
             }
         }
-        tracker.close();
-        tracker.wait().await;
-
         Ok(())
     }
 }

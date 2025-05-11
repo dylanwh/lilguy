@@ -11,7 +11,6 @@ use mimalloc::MiMalloc;
 use parking_lot::Mutex;
 use reedline::ExternalPrinter;
 use std::{io::IsTerminal, process::exit, sync::Arc, time::Duration};
-use tokio::time::sleep;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing_subscriber::{fmt::MakeWriter, EnvFilter};
 
@@ -84,7 +83,6 @@ async fn main() -> Result<()> {
     let args = Args::new();
     let token = CancellationToken::new();
     let tracker = TaskTracker::new();
-    let timeout = Duration::from_secs(args.timeout);
 
     tokio::spawn({
         let token = token.clone();
@@ -93,13 +91,16 @@ async fn main() -> Result<()> {
                 .await
                 .expect("failed to listen for ctrl-c");
             token.cancel();
-            sleep(timeout).await;
-            eprintln!("timed out waiting for tasks to finish");
-            exit(1);
         }
     });
 
-    args.run(token, tracker, output).await
+    let timeout_duration = Duration::from_secs(args.timeout);
+    args.run(token.clone(), tracker.clone(), output).await?;
+    tracker.close();
+    token.cancelled().await;
+    tokio::time::timeout(timeout_duration, tracker.wait()).await?;
+
+    Ok(())
 }
 
 fn init_tracing_subscriber(output: Output) {

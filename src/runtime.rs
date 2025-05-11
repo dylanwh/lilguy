@@ -4,7 +4,6 @@ pub mod file;
 pub mod http;
 pub mod os;
 pub mod regex;
-pub mod task;
 
 use eyre::{eyre, Result};
 use http::not_found;
@@ -114,8 +113,8 @@ impl Runtime {
     async fn start_watcher(
         &self,
         directory: &Path,
-        token: &CancellationToken,
         tracker: &TaskTracker,
+        token: &CancellationToken,
     ) -> Result<(), eyre::Error> {
         let runtime = self.clone();
         let template = runtime.services()?.template.clone();
@@ -132,13 +131,18 @@ impl Runtime {
         .await?;
 
         let app = directory.to_path_buf();
+        let restart_tracker = tracker.clone();
+        let restart_token = token.clone();
         tracker.spawn(async move {
             while let Some((name, _changes)) = rx.recv().await {
                 tracing::debug!("reload {name}");
                 match name {
                     "runtime" => {
                         tracing::info!("restarting runtime");
-                        if let Err(err) = runtime.restart_lua(&app).await {
+                        if let Err(err) = runtime
+                            .restart_lua(&app)
+                            .await
+                        {
                             tracing::error!(?err, "error restarting runtime");
                         }
                     }
@@ -166,8 +170,8 @@ impl Runtime {
     async fn start_lua(
         &self,
         app: &Path,
-        token: &CancellationToken,
         tracker: &TaskTracker,
+        token: &CancellationToken,
     ) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
@@ -191,11 +195,15 @@ impl Runtime {
             on_shutdown.call_async::<()>(()).await?;
         }
 
+
         Ok(())
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    async fn restart_lua(&self, app: &Path) -> Result<()> {
+    async fn restart_lua(
+        &self,
+        app: &Path,
+    ) -> Result<()> {
         let lua = self.new_lua(app).await?;
         self.set_lua(lua);
         Ok(())
@@ -204,8 +212,8 @@ impl Runtime {
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn start(
         &self,
-        token: &CancellationToken,
         tracker: &TaskTracker,
+        token: &CancellationToken,
         app: &Path,
         reload: bool,
     ) -> Result<(), eyre::Report> {
@@ -214,9 +222,9 @@ impl Runtime {
         }
         self.start_services(app).await?;
         if reload {
-            self.start_watcher(app, token, tracker).await?;
+            self.start_watcher(app, tracker, token).await?;
         }
-        self.start_lua(app, token, tracker).await?;
+        self.start_lua(app, tracker, token).await?;
         self.started.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -259,27 +267,13 @@ impl Runtime {
         globals.set("null", lua.null())?;
         globals.set("array_mt", lua.array_metatable())?;
 
-        globals.set(
-            "info",
-            lua.create_function(|_, args: LuaMultiValue| {
-                let mut buffer = String::new();
-                for arg in args {
-                    let arg = arg.to_string()?;
-                    buffer.push_str(&arg);
-                }
-                tracing::info!("{buffer}");
-                Ok(())
-            })?,
-        )?;
-
-        lua.load(LUA_PRELUDE).exec()?;
+        lua.load(LUA_PRELUDE).exec_async().await?;
 
         channel::register(&lua)?;
         file::register(&lua)?;
         http::register(&lua)?;
         os::register(&lua)?;
         regex::register(&lua)?;
-        task::register(&lua)?;
 
         let db = &services.database;
         http::set_cookie_key(&lua, db).await?;

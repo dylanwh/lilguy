@@ -22,11 +22,11 @@ impl Run {
     #[tracing::instrument(level = "debug")]
     pub async fn run(
         self,
-        token: &CancellationToken,
         tracker: &TaskTracker,
+        token: &CancellationToken,
     ) -> Result<(), eyre::Report> {
         let runtime = Runtime::new();
-        runtime.start(token, tracker, &self.app, false).await?;
+        runtime.start(tracker, token, &self.app, false).await?;
         runtime.run(self.func, self.args).await?;
 
         Ok(())

@@ -22,14 +22,14 @@ impl Shell {
     #[tracing::instrument(level = "debug")]
     pub async fn run(
         self,
-        token: &CancellationToken,
         tracker: &TaskTracker,
+        token: &CancellationToken,
         config: &Config,
         output: &Output,
     ) -> Result<()> {
         let runtime = Runtime::new();
         runtime
-            .start(token, tracker, &self.app, !self.no_reload)
+            .start(tracker, token, &self.app, !self.no_reload)
             .await?;
         repl::start(token, tracker, config, output, runtime.lua()?).await?;
         Ok(())

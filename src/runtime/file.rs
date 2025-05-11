@@ -189,7 +189,11 @@ impl LuaUserData for LuaFile {
                     Some("set") => SeekFrom::Start(offset.unwrap_or(0) as u64),
                     Some("cur") | None => SeekFrom::Current(offset.unwrap_or(0)),
                     Some("end") => SeekFrom::End(offset.unwrap_or(0)),
-                    _ => return Err(LuaError::external("invalid whence: must be set, cur, or end. default is cur")),
+                    _ => {
+                        return Err(LuaError::external(
+                            "invalid whence: must be set, cur, or end. default is cur",
+                        ))
+                    }
                 };
                 this.send(Message::Seek(whence)).await
             },

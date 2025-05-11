@@ -60,15 +60,15 @@ impl Serve {
     #[tracing::instrument(level = "debug")]
     pub async fn run(
         self,
-        token: &CancellationToken,
         tracker: &TaskTracker,
+        token: &CancellationToken,
         config: &Config,
         output: &Output,
     ) -> Result<()> {
         let runtime = Runtime::new();
         let listener = TcpListener::bind(&self.listen).await?;
         runtime
-            .start(token, tracker, &self.app, !self.no_reload)
+            .start(tracker, token, &self.app, !self.no_reload)
             .await?;
 
         let assets_dir = self.app.with_file_name("assets");
