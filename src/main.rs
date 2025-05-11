@@ -16,6 +16,9 @@ use tracing_subscriber::{fmt::MakeWriter, EnvFilter};
 
 use command::Args;
 
+#[cfg(target_os = "windows")]
+use enable_ansi_support::enable_ansi_support;
+
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
@@ -72,6 +75,9 @@ impl MakeWriter<'_> for Output {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    enable_ansi_support()?;
+
     color_eyre::install()?;
 
     let output = Output {

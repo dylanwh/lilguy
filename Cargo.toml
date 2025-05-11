@@ -70,9 +70,14 @@ tree-sitter = "0.24.6"
 tree-sitter-highlight = "0.24.6"
 tree-sitter-lua = "0.2.0"
 walkdir = "2.5.0"
+#tray-icon = { version = "0.20.1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+enable-ansi-support = "0.2.1"
 
 [build-dependencies]
 walkdir = "2.5.0"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.19"
+
