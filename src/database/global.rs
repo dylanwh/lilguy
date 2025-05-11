@@ -311,12 +311,7 @@ impl LuaUserData for GlobalTablePairs<serde_json::Value> {
     // implement call which is an async function that calls recv
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_async_meta_method_mut(LuaMetaMethod::Call, |lua, mut this, ()| async move {
-            let value = this
-                .0
-                .recv()
-                .await
-                .transpose()
-                .into_lua_err()?;
+            let value = this.0.recv().await.transpose().into_lua_err()?;
             let mut mv = LuaMultiValue::new();
 
             match value {
@@ -374,8 +369,7 @@ impl LuaUserData for GlobalTable {
         methods.add_async_meta_method(
             LuaMetaMethod::Index,
             |lua, this, key: LuaValue| async move {
-                let value: Option<serde_json::Value> =
-                    this.get(key).await.into_lua_err()?;
+                let value: Option<serde_json::Value> = this.get(key).await.into_lua_err()?;
                 if let Some(ref value) = value {
                     Ok(lua.to_value(value)?)
                 } else {

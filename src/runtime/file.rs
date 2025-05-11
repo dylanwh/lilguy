@@ -271,9 +271,7 @@ fn file_type(_lua: &Lua, value: LuaValue) -> LuaResult<String> {
 // read in an entire file
 async fn file_read(lua: Lua, filename: LuaValue) -> LuaResult<LuaString> {
     let filename = filename.to_string()?;
-    let data = tokio::fs::read(filename)
-        .await
-        .into_lua_err()?;
+    let data = tokio::fs::read(filename).await.into_lua_err()?;
 
     lua.create_string(&data)
 }
@@ -288,9 +286,7 @@ async fn file_write(_lua: Lua, (filename, data): (LuaValue, LuaString)) -> LuaRe
 
 async fn file_rename(_lua: Lua, (old, new): (LuaValue, LuaValue)) -> LuaResult<()> {
     let (old, new) = (old.to_string()?, new.to_string()?);
-    tokio::fs::rename(old, new)
-        .await
-        .into_lua_err()
+    tokio::fs::rename(old, new).await.into_lua_err()
 }
 
 async fn file_exists(_lua: Lua, filename: LuaValue) -> LuaResult<bool> {
@@ -309,21 +305,15 @@ async fn file_exists(_lua: Lua, filename: LuaValue) -> LuaResult<bool> {
 }
 
 async fn create_dir(_lua: Lua, path: String) -> LuaResult<()> {
-    tokio::fs::create_dir(path)
-        .await
-        .into_lua_err()
+    tokio::fs::create_dir(path).await.into_lua_err()
 }
 
 async fn create_dir_al(_lua: Lua, path: String) -> LuaResult<()> {
-    tokio::fs::create_dir_all(path)
-        .await
-        .into_lua_err()
+    tokio::fs::create_dir_all(path).await.into_lua_err()
 }
 
 async fn file_remove(_lua: Lua, filename: String) -> LuaResult<()> {
-    tokio::fs::remove_file(filename)
-        .await
-        .into_lua_err()
+    tokio::fs::remove_file(filename).await.into_lua_err()
 }
 
 pub struct LuaTempFile {
