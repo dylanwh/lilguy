@@ -119,3 +119,10 @@ function drop(n, iter, state, initial)
         return val
     end, state, var
 end
+
+
+function printf(fmt, ...)
+    local args = {...}
+    local str = string.format(fmt, table.unpack(args))
+    print(str)
+end
