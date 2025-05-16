@@ -1,3 +1,5 @@
+pub mod websocket;
+
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, HeaderName, HeaderValue},
@@ -12,6 +14,8 @@ use rusqlite::OptionalExtension;
 use std::{ops::Deref, sync::Arc};
 
 use crate::database::Database;
+
+pub use websocket::LuaWebSocket;
 
 const FETCH_CLIENT: &str = "fetch_client";
 const REQUEST_MT: &str = "request_mt";

@@ -16,9 +16,9 @@ codegen-units = 1
 
 [dependencies]
 async-tempfile = "0.6.0"
-axum = { version = "0.8.1", features = ["http2"] }
+axum = { version = "0.8.1", features = ["http2", "ws"] }
 base64 = "0.22.1"
-bytes = "1.9.0"
+bytes = { version = "1.9.0", features = ["serde"] }
 clap = { version = "4.5.23", features = ["derive", "env"] }
 color-eyre = "0.6.3"
 colored_json = "5.0.0"

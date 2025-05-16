@@ -12,7 +12,10 @@ use parking_lot::Mutex;
 use reedline::ExternalPrinter;
 use std::{io::IsTerminal, sync::Arc, time::Duration};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing_subscriber::{fmt::MakeWriter, EnvFilter};
+use tracing_subscriber::{
+    fmt::{format::FmtSpan, MakeWriter},
+    EnvFilter,
+};
 
 use command::Args;
 
@@ -124,7 +127,7 @@ fn init_tracing_subscriber(output: Output) {
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
-        // .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
+        .with_span_events(FmtSpan::ENTER | FmtSpan::EXIT)
         .with_env_filter(filter)
         .with_ansi(is_terminal)
         .compact()

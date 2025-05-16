@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Request, State},
+    extract::{self, ws::WebSocket, Request, State, WebSocketUpgrade},
     http::{Response, StatusCode},
     response::IntoResponse,
     routing::any,
@@ -25,7 +25,7 @@ use crate::{
     repl,
     routes::Routes,
     runtime::{
-        http::{create_request, new_response, LuaCookieJar, LuaHeaders},
+        http::{create_request, new_response, LuaCookieJar, LuaHeaders, LuaWebSocket},
         Runtime,
     },
     Output,
@@ -75,6 +75,8 @@ impl Serve {
 
         let app = Router::new()
             .nest_service("/assets", ServeDir::new(assets_dir))
+            .route("/ws/{*path}", any(handle_websocket_request))
+            .route("/ws", any(handle_websocket_request))
             .route("/", any(handle_request))
             .route("/{*path}", any(handle_request))
             .with_state(runtime.clone())
@@ -165,6 +167,33 @@ async fn handle_request(
     handler.call_async::<()>((req, &res)).await?;
 
     Ok(LuaResponse { res })
+}
+
+async fn handle_websocket_request(
+    extract::Path(path): extract::Path<String>,
+    ws: WebSocketUpgrade,
+    State(runtime): State<Runtime>,
+) -> Response<Body> {
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = handle_websocket(socket, path, runtime).await {
+            tracing::error!(?e, "error handling websocket");
+        }
+    })
+}
+
+async fn handle_websocket(socket: WebSocket, path: String, runtime: Runtime) -> Result<()> {
+    let lua = runtime.lua()?;
+
+    let globals = lua.globals();
+    if let Some(on_ws_connect) = globals.get::<Option<LuaFunction>>("on_ws_connect")? {
+        on_ws_connect
+            .call_async::<()>((LuaWebSocket::new(socket), path))
+            .await?;
+    } else {
+        tracing::error!("no on_ws_connect function defined");
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

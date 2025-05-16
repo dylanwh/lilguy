@@ -108,15 +108,15 @@ impl New {
                 NewError::WriteFile(assets_dir.join("pico.css").to_string_lossy().to_string(), e)
             })?;
 
-        println!("writing htmx.min.js");
-        tokio::fs::write(assets_dir.join("htmx.min.js"), HTMX_JS)
-            .await
-            .map_err(|e| {
-                NewError::WriteFile(
-                    assets_dir.join("htmx.min.js").to_string_lossy().to_string(),
-                    e,
-                )
-            })?;
+        let htmx_files = ["htmx.min.js", "htmx-ext-ws.min.js"];
+        for htmx_file in htmx_files {
+            println!("writing {htmx_file}");
+            tokio::fs::write(assets_dir.join(htmx_file), HTMX_JS)
+                .await
+                .map_err(|e| {
+                    NewError::WriteFile(assets_dir.join(htmx_file).to_string_lossy().to_string(), e)
+                })?;
+        }
 
         for file in Files::iter() {
             let path = self.directory.join(file.as_ref());
