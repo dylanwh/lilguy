@@ -1,7 +1,8 @@
 use mlua::prelude::*;
+use regex::Regex;
 
 pub struct LuaRegex {
-    regex: regex::Regex,
+    regex: Regex,
 }
 
 impl LuaRegex {
@@ -18,7 +19,7 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
 }
 
 fn regex_new(_lua: &Lua, pattern: String) -> LuaResult<LuaRegex> {
-    let regex = regex::Regex::new(&pattern).into_lua_err()?;
+    let regex = Regex::new(&pattern).into_lua_err()?;
     Ok(LuaRegex { regex })
 }
 

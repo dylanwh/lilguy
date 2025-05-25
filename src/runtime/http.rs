@@ -11,6 +11,7 @@ use mlua::prelude::*;
 use parking_lot::Mutex;
 use reqwest::{Client, Method, RequestBuilder};
 use rusqlite::OptionalExtension;
+use serde::{ser::SerializeMap, Serialize};
 use std::{ops::Deref, sync::Arc};
 
 use crate::database::Database;
@@ -79,6 +80,19 @@ pub async fn set_cookie_key(lua: &Lua, db: &Database) -> LuaResult<()> {
 
 #[derive(Debug, Default)]
 pub struct LuaHeaders(HeaderMap);
+
+impl Serialize for LuaHeaders {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (key, value) in self.0.iter() {
+            map.serialize_entry(key.as_str(), value.to_str().unwrap_or(""))?;
+        }
+        map.end()
+    }
+}
 
 impl LuaHeaders {
     pub fn new() -> Self {
@@ -324,7 +338,7 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
         .named_registry_value::<LuaUserDataRef<LuaCookieKey>>(COOKIE_KEY)?
         .key();
     let cookie_jar = lua.create_userdata(LuaCookieJar::new(key, &parts.headers).into_lua_err()?)?;
-    let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
+    let headers = lua.create_ser_userdata(LuaHeaders(parts.headers))?;
     let body = to_bytes(body, 1024 * 1024 * 16).await.into_lua_err()?;
 
     req.set("method", method)?;
@@ -351,7 +365,7 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
 pub fn new_response(lua: &Lua) -> Result<LuaTable, LuaError> {
     let res = lua.create_table()?;
     res.set("status", 200)?;
-    res.set("headers", lua.create_userdata(LuaHeaders::new())?)?;
+    res.set("headers", lua.create_ser_userdata(LuaHeaders::new())?)?;
     res.set("body", "")?;
     res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into());
     Ok(res)
@@ -376,7 +390,7 @@ pub async fn create_response(
     let (parts, body) = response.into_parts();
     let res = lua.create_table()?;
     let status = parts.status.as_u16();
-    let headers = lua.create_userdata(LuaHeaders(parts.headers))?;
+    let headers = lua.create_ser_userdata(LuaHeaders(parts.headers))?;
     let body = to_bytes(body, 1024 * 1024 * 16).await.into_lua_err()?;
 
     res.set("status", status)?;
