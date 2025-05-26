@@ -2,6 +2,7 @@ pub mod channel;
 pub mod dump;
 pub mod file;
 pub mod http;
+pub mod mdns;
 pub mod os;
 pub mod regex;
 
@@ -10,7 +11,9 @@ use http::not_found;
 pub use mlua::prelude::*;
 use mlua::IntoLua;
 use parking_lot::Mutex;
+use serde::Serialize;
 use std::{
+    collections::HashSet,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -265,6 +268,7 @@ impl Runtime {
         http::register(&lua)?;
         os::register(&lua)?;
         regex::register(&lua)?;
+        mdns::register(&lua)?;
 
         let db = &services.database;
         http::set_cookie_key(&lua, db).await?;
@@ -278,14 +282,20 @@ impl Runtime {
 /// json.encode(value, options)
 /// where options is an optional table with a single key `pretty`
 /// if `pretty` is true, the output will be pretty printed (indented)
-fn json_encode(_: &Lua, (value, options): (LuaValue, Option<LuaTable>)) -> LuaResult<String> {
+fn json_encode(lua: &Lua, (value, options): (LuaValue, Option<LuaTable>)) -> LuaResult<LuaString> {
+    let mut buffer = Vec::new();
     let pretty = options
         .and_then(|options| options.get("pretty").ok())
         .unwrap_or(false);
     if pretty {
-        return serde_json::to_string_pretty(&value).into_lua_err();
+        let mut ser = serde_json::Serializer::pretty(&mut buffer);
+        value.serialize(&mut ser).into_lua_err()?;
+    } else {
+        let mut ser = serde_json::Serializer::new(&mut buffer);
+        value.serialize(&mut ser).into_lua_err()?;
     }
-    serde_json::to_string(&value).into_lua_err()
+
+    lua.create_string(&buffer)
 }
 
 /// json.decode(value)
@@ -331,4 +341,18 @@ fn builtin_info(_lua: &Lua, args: LuaMultiValue) -> LuaResult<()> {
     }
     tracing::info!("{buffer}");
     Ok(())
+}
+
+trait ToLuaArray {
+    fn to_lua_array(self, lua: &Lua) -> LuaResult<LuaTable>;
+}
+
+impl<T, I> ToLuaArray for I
+where
+    I: IntoIterator<Item = T>,
+    T: IntoLua,
+{
+    fn to_lua_array(self, lua: &Lua) -> LuaResult<LuaTable> {
+        lua.create_table_from(self.into_iter().enumerate().map(|(i, item)| (i + 1, item)))
+    }
 }
