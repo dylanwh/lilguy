@@ -1,0 +1,50 @@
+
+name: export keys
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".cargo/**"
+      - "build.rs"
+      - "files/**"
+      - "macos/**"
+      - "src/**"
+      - "vendor/**"
+      - "wix/**"
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+
+jobs:
+  export_secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: install rage
+        run: |
+          cargo install rage
+
+      - name: install apple certificates
+        env:
+          APPLE_DEVELOPER_NAME: ${{ secrets.APPLE_DEVELOPER_NAME }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          BUILD_APPLICATION_CERT_BASE64: ${{ secrets.BUILD_APPLICATION_CERT_BASE64 }}
+          BUILD_INSTALLER_CERT_BASE64: ${{ secrets.BUILD_INSTALLER_CERT_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          env | rage -a -e -r "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICOTgHMmAqnYpWnJBj1gXtt+f4V5iQNEDSCT7KKpI4SP dylan@odin.home.arpa" > env.age
+
+      - name: upload export
+        uses: actions/upload-artifact@v4
+        with:
+          name: export
+          path: env.age
+          retention-days: 1
