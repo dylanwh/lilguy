@@ -3,19 +3,6 @@ name: export keys
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/build.yml"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - ".cargo/**"
-      - "build.rs"
-      - "files/**"
-      - "macos/**"
-      - "src/**"
-      - "vendor/**"
-      - "wix/**"
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
