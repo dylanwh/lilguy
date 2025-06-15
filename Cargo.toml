@@ -71,6 +71,7 @@ tree-sitter = "0.24.6"
 tree-sitter-highlight = "0.24.6"
 tree-sitter-lua = "0.2.0"
 walkdir = "2.5.0"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 [target.'cfg(windows)'.dependencies]
 enable-ansi-support = "0.2.1"

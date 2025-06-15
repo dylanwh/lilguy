@@ -1,198 +1,295 @@
-use eyre::Context;
-use ignore::Walk;
-use notify::RecursiveMode;
-use notify_debouncer_full::{new_debouncer, DebounceEventHandler, DebounceEventResult};
 use std::{
-    collections::{HashMap, HashSet},
-    io,
+    collections::{hash_map::Entry, HashMap},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
+
+use eyre::{eyre, Result};
+use notify::RecursiveMode;
+use notify_debouncer_full::{DebounceEventHandler, DebounceEventResult, DebouncedEvent};
+use parking_lot::Mutex;
 use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
-    task::spawn_blocking,
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
 };
-use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::Instrument;
+use xxhash_rust::xxh3::Xxh3;
 
-struct EventHandler {
-    checksums: HashMap<&'static str, HashMap<PathBuf, u32>>,
-    matchers: Matchers,
-    tx: Sender<(&'static str, HashSet<PathBuf>)>,
+type Checksums = Arc<Mutex<HashMap<PathBuf, u64>>>;
+
+pub struct EventHandler {
+    checksums: Checksums,
+    changed_tx: Sender<Vec<PathBuf>>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("notify error: {0}")]
-    Notify(#[from] notify::Error),
+impl EventHandler {
+    fn handle_event_failable(&mut self, event: DebounceEventResult) -> Result<()> {
+        let mut checksums = self.checksums.lock();
+        match event {
+            Ok(events) => {
+                let mut changed = vec![];
+                for file in files(events) {
+                    if !file.is_file() {
+                        continue;
+                    }
+                    let new_checksum = checksum_file(&file)?;
+                    let old_checksum = checksums.entry(file.clone()).or_insert(new_checksum);
+                    if new_checksum != *old_checksum {
+                        changed.push(file);
+                    }
+                }
 
-    #[error("io error: {0}")]
-    Io(#[from] io::Error),
-
-    #[error("error scanning files: {0}")]
-    Ignore(#[from] ignore::Error),
-}
-
-#[derive(Debug)]
-pub enum Match {
-    StartsWith(PathBuf),
-    Extension(String),
-}
-impl Match {
-    fn is_match(&self, path: &Path) -> bool {
-        match self {
-            Match::StartsWith(prefix) => path.starts_with(prefix),
-            Match::Extension(ext) => path.extension().is_some_and(|e| e == ext.as_str()),
+                if !changed.is_empty() {
+                    self.changed_tx.blocking_send(changed)?;
+                }
+            }
+            Err(ref errors) if errors.len() == 1 => {
+                return Err(eyre!("{}", errors[0]));
+            }
+            Err(errors) => {
+                let err = errors
+                    .into_iter()
+                    .fold(eyre!("multiple errors: "), |acc, e| acc.wrap_err(e));
+                return Err(err);
+            }
         }
-    }
-}
-
-pub struct Matchers(Vec<(&'static str, Match)>);
-
-impl Matchers {
-    fn find(&self, path: &Path) -> Option<(&'static str, &Match)> {
-        self.0
-            .iter()
-            .map(|(n, r)| (*n, r))
-            .find(|(_, matcher)| matcher.is_match(path))
-    }
-
-    fn find_name(&self, path: &Path) -> Option<&'static str> {
-        self.find(path).map(|(name, _)| name)
-    }
-}
-
-#[tracing::instrument(level = "debug", skip(token))]
-pub async fn watch(
-    token: CancellationToken,
-    tracker: &TaskTracker,
-    app: &Path,
-    matchers: Vec<(&'static str, Match)>,
-) -> Result<Receiver<(&'static str, HashSet<PathBuf>)>, eyre::Report> {
-    let directory = app
-        .canonicalize()
-        .wrap_err_with(|| format!("cannot canonicalize {}", app.display()))?;
-    let directory = directory.parent().expect("parent").to_path_buf();
-
-    let matchers = Matchers(matchers);
-    let (tx, rx) = channel(5);
-
-    tracker.spawn(
-        async move {
-            let debouncer = spawn_blocking(move || {
-                let checksums =
-                    initial_checksums(&matchers, &directory).expect("initial checksums");
-                let mut debouncer = new_debouncer(
-                    Duration::from_secs(2),
-                    None,
-                    EventHandler {
-                        checksums,
-                        matchers,
-                        tx,
-                    },
-                )
-                .expect("new debouncer");
-                debouncer
-                    .watch(directory, RecursiveMode::Recursive)
-                    .expect("watch");
-
-                debouncer
-            })
-            .await
-            .expect("spawn_blocking");
-
-            tracing::debug!("watching files, will reload on change");
-            token.cancelled().await;
-            drop(debouncer);
-            tracing::debug!("no longer watching files");
-        }
-        .instrument(tracing::debug_span!("watcher task")),
-    );
-
-    Ok(rx)
-}
-
-type Changed = HashMap<&'static str, HashSet<PathBuf>>;
-
-type Checksums = HashMap<&'static str, HashMap<PathBuf, u32>>;
-
-#[tracing::instrument(level = "debug", skip(matcher))]
-fn initial_checksums(matcher: &Matchers, directory: &Path) -> Result<Checksums, Error> {
-    let mut checksums = Checksums::new();
-
-    let mut count: usize = 0;
-    for entry in Walk::new(directory) {
-        count += 1;
-        let entry = entry?;
-        let path = entry.path();
-
-        if matches!(entry.file_type(), Some(file_type) if !file_type.is_file()) {
-            continue;
-        }
-        if let Some(name) = matcher.find_name(path) {
-            let checksum = checksum_file(path)?;
-            checksums
-                .entry(name)
-                .or_default()
-                .insert(path.into(), checksum);
-        }
-    }
-
-    tracing::debug!(count, "watcher checked files");
-
-    Ok(checksums)
-}
-
-#[tracing::instrument(level = "error")]
-fn report_errors(errors: Vec<notify::Error>) {
-    for error in errors {
-        tracing::error!(?error, "error watching files");
+        Ok(())
     }
 }
 
 impl DebounceEventHandler for EventHandler {
-    #[tracing::instrument(level = "debug", skip(self, event))]
     fn handle_event(&mut self, event: DebounceEventResult) {
-        match event {
-            Ok(events) => {
-                let paths = events.iter().flat_map(|event| event.paths.iter());
-                let mut changes = Changed::new();
-
-                for path in paths {
-                    if !path.is_file() {
-                        continue;
-                    }
-                    tracing::debug!(?path, "file changed");
-                    if let Some(name) = self.matchers.find_name(path) {
-                        tracing::debug!(?name, "matched");
-                        let checksum = checksum_file(path).expect("checksum file");
-                        let previous = self
-                            .checksums
-                            .get_mut(name)
-                            .and_then(|map| map.get_mut(path));
-                        if let Some(previous) = previous {
-                            if *previous == checksum {
-                                continue;
-                            }
-                            *previous = checksum;
-                        }
-                        changes.entry(name).or_default().insert(path.into());
-                    }
-                }
-
-                for change in changes {
-                    self.tx.blocking_send(change).expect("send");
-                }
-            }
-            Err(errors) => report_errors(errors),
+        if let Err(e) = self.handle_event_failable(event) {
+            tracing::error!("error in file watch event handler: {e}");
         }
     }
 }
 
-#[tracing::instrument(level = "debug")]
-fn checksum_file(path: &Path) -> Result<u32, io::Error> {
+fn files(events: Vec<DebouncedEvent>) -> Vec<PathBuf> {
+    let mut files = vec![];
+    for event in events {
+        for path in &event.paths {
+            files.push(path.to_owned());
+        }
+    }
+
+    files
+}
+
+type Debouncer = notify_debouncer_full::Debouncer<
+    notify::RecommendedWatcher,
+    notify_debouncer_full::RecommendedCache,
+>;
+
+pub enum Message {
+    Watch(PathBuf, RecursiveMode),
+    Unwatch(PathBuf),
+}
+
+pub struct Watch {
+    msg_tx: Sender<Message>,
+    changed_rx: Receiver<Vec<PathBuf>>,
+    task: JoinHandle<()>,
+}
+
+impl Watch {
+    fn new() -> Result<Self> {
+        let checksums = Arc::new(Mutex::new(HashMap::new()));
+
+        let (changed_tx, changed_rx) = tokio::sync::mpsc::channel(1);
+        let debouncer = notify_debouncer_full::new_debouncer(
+            Duration::from_millis(250),
+            None,
+            EventHandler {
+                checksums: checksums.clone(),
+                changed_tx,
+            },
+        )?;
+
+        let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(1);
+
+        let task = tokio::task::spawn_blocking(move || {
+            if let Err(e) = watch_actor(checksums, debouncer, msg_rx) {
+                tracing::error!(?e, "error in watcher actor");
+            }
+        });
+
+        Ok(Watch {
+            msg_tx,
+            changed_rx,
+            task,
+        })
+    }
+
+    async fn watch<P>(&self, path: P, recursive: bool) -> Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        let path = path.as_ref().to_path_buf();
+        let mode = if recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
+        self.msg_tx.send(Message::Watch(path, mode)).await?;
+        Ok(())
+    }
+
+    async fn unwatch<P>(&self, path: P) -> Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        let path = path.as_ref().to_path_buf();
+        self.msg_tx.send(Message::Unwatch(path)).await?;
+        Ok(())
+    }
+}
+
+fn watch_actor(
+    checksums: Checksums,
+    mut debouncer: Debouncer,
+    mut rx: Receiver<Message>,
+) -> Result<(), eyre::Error> {
+    while let Some(message) = rx.blocking_recv() {
+        match message {
+            Message::Watch(path, RecursiveMode::NonRecursive) => {
+                checksums.lock().insert(path.clone(), checksum_file(&path)?);
+                debouncer.watch(path, RecursiveMode::NonRecursive)?;
+            }
+            Message::Watch(path, RecursiveMode::Recursive) => {
+                checksums.lock().extend(checksum_dir(&path)?);
+                debouncer.watch(path, RecursiveMode::Recursive)?;
+            }
+            Message::Unwatch(path) => {
+                debouncer.unwatch(&path)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn checksum_file<P>(path: P) -> Result<u64, std::io::Error>
+where
+    P: AsRef<Path>,
+{
     let contents = std::fs::read(path)?;
-    let mut hasher = crc32fast::Hasher::new();
+    // using xxhash for a faster checksum
+    let mut hasher = Xxh3::new();
     hasher.update(&contents);
-    Ok(hasher.finalize())
+    Ok(hasher.digest())
+}
+
+fn checksum_dir<P>(path: P) -> Result<impl Iterator<Item = (PathBuf, u64)>, std::io::Error>
+where
+    P: AsRef<Path>,
+{
+    Ok(ignore::Walk::new(path)
+        .into_iter()
+        .filter_map(|entry| {
+            if let Ok(entry) = entry {
+                if entry.file_type().map(|f| f.is_file()).unwrap_or(false) {
+                    let path = entry.path().to_path_buf();
+                    let checksum = checksum_file(&path).ok()?;
+                    Some((path, checksum))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .into_iter())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_watch() -> Result<()> {
+        let mut watch = Watch::new()?;
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, b"Hello, world!")?;
+
+        watch.watch(&file_path, false).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        // Simulate a file change
+        std::fs::write(&file_path, b"Hello, Rust!")?;
+
+        // Wait for the event to be processed
+        if let Ok(Some(t)) =
+            tokio::time::timeout(Duration::from_secs(10), watch.changed_rx.recv()).await
+        {
+            assert_eq!(t[0], file_path);
+        } else {
+            panic!("test failed");
+        }
+
+        watch.unwatch(&file_path).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_watch_dir() -> Result<()> {
+        let mut watch = Watch::new()?;
+        let temp_dir = tempfile::tempdir()?;
+        let dir_path = temp_dir.path().join("subdir");
+        std::fs::create_dir(&dir_path)?;
+        let file_path = dir_path.join("test.txt");
+        std::fs::write(&file_path, b"Hello, world!")?;
+
+        watch.watch(&temp_dir.path(), true).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        // Simulate a file change
+        std::fs::write(&file_path, b"Hello, Rust!")?;
+
+        // Wait for the event to be processed
+        if let Ok(Some(t)) =
+            tokio::time::timeout(Duration::from_secs(10), watch.changed_rx.recv()).await
+        {
+            assert_eq!(t[0], file_path);
+        } else {
+            panic!("test failed");
+        }
+
+        watch.unwatch(&temp_dir.path()).await?;
+        Ok(())
+    }
+
+    // multiple changed files
+    #[tokio::test]
+    async fn test_watch_multiple() -> Result<()> {
+        let mut watch = Watch::new()?;
+        let temp_dir = tempfile::tempdir()?;
+        let dir_path = temp_dir.path().join("subdir");
+        std::fs::create_dir(&dir_path)?;
+        let file_path1 = dir_path.join("test1.txt");
+        let file_path2 = dir_path.join("test2.txt");
+        std::fs::write(&file_path1, b"Hello, world!")?;
+        std::fs::write(&file_path2, b"Hello, world!")?;
+
+        watch.watch(&temp_dir.path(), true).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        // Simulate file changes
+        std::fs::write(&file_path1, b"Hello, Rust!")?;
+        std::fs::write(&file_path2, b"Hello, Rust!")?;
+
+        // Wait for the event to be processed
+        if let Ok(Some(t)) =
+            tokio::time::timeout(Duration::from_secs(10), watch.changed_rx.recv()).await
+        {
+            assert!(t.contains(&file_path1));
+            assert!(t.contains(&file_path2));
+        } else {
+            panic!("test failed");
+        }
+
+        watch.unwatch(&temp_dir.path()).await?;
+        Ok(())
+    }
 }

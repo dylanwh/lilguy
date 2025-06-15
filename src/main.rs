@@ -10,7 +10,8 @@ use eyre::Result;
 use mimalloc::MiMalloc;
 use parking_lot::Mutex;
 use reedline::ExternalPrinter;
-use std::{io::IsTerminal, sync::Arc, time::Duration};
+use std::{collections::HashMap, io::IsTerminal, path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing_subscriber::{
     fmt::{format::FmtSpan, MakeWriter},

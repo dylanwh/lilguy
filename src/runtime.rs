@@ -26,7 +26,6 @@ use crate::{
     database::{global::Global, Database},
     routes::Routes,
     template::Template,
-    watch::{watch, Match},
 };
 
 const LUA_PRELUDE: &str = include_str!("prelude.lua");
@@ -112,58 +111,6 @@ impl Runtime {
             .ok_or_else(|| eyre!("services not started"))
     }
 
-    #[tracing::instrument(level = "debug", skip(self, directory))]
-    async fn start_watcher(
-        &self,
-        directory: &Path,
-        tracker: &TaskTracker,
-        token: &CancellationToken,
-    ) -> Result<(), eyre::Error> {
-        let runtime = self.clone();
-        let template = runtime.services()?.template.clone();
-
-        let mut rx = watch(
-            token.clone(),
-            tracker,
-            directory,
-            vec![
-                ("runtime", Match::Extension("lua".to_string())),
-                ("templates", Match::StartsWith(directory.join("templates"))),
-            ],
-        )
-        .await?;
-
-        let app = directory.to_path_buf();
-        tracker.spawn(async move {
-            while let Some((name, _changes)) = rx.recv().await {
-                tracing::debug!("reload {name}");
-                match name {
-                    "runtime" => {
-                        tracing::info!("restarting runtime");
-                        if let Err(err) = runtime.restart_lua(&app).await {
-                            tracing::error!(?err, "error restarting runtime");
-                        }
-                    }
-                    "templates" => {
-                        tracing::info!("reloading templates");
-                        if let Err(err) = template
-                            .call(|env| {
-                                env.clear_templates();
-                                Ok(())
-                            })
-                            .await
-                        {
-                            tracing::error!(?err, "error reloading templates");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        Ok(())
-    }
-
     #[tracing::instrument(level = "debug", skip(self, app))]
     async fn start_lua(
         &self,
@@ -216,7 +163,7 @@ impl Runtime {
         }
         self.start_services(app).await?;
         if reload {
-            self.start_watcher(app, tracker, token).await?;
+            todo!()
         }
         self.start_lua(app, tracker, token).await?;
         self.started.store(true, Ordering::Relaxed);
