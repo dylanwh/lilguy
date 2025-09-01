@@ -74,7 +74,10 @@ pub async fn start(
         )?));
     let (tx, rx) = tokio::sync::mpsc::channel(1);
 
-    tracker.spawn_blocking(move || read_loop(reedline, prompt_config, tx));
+    {
+        let printer = printer.clone();
+        tracker.spawn_blocking(move || read_loop(reedline, printer, prompt_config, tx));
+    }
     tracker.spawn(eval_loop(token.clone(), rx, printer, highlighter, lua));
 
     Ok(())
@@ -116,6 +119,7 @@ async fn read_line<R>(token: &CancellationToken, rx: &mut Receiver<R>) -> Option
 
 fn read_loop(
     mut reedline: Reedline,
+    printer: ExternalPrinter<String>,
     prompt_config: PromptConfig,
     tx: Sender<String>,
 ) -> Result<()> {
@@ -127,14 +131,14 @@ fn read_loop(
                 }
             }
             Ok(Signal::CtrlC) => {
-                println!("^C");
+                printer.print("^C".to_string());
             }
             Ok(Signal::CtrlD) => {
                 tracing::info!("^D");
                 break;
             }
             Err(e) => {
-                eprintln!("Error: {}", e);
+                printer.print(format!("Error: {}", e));
                 break;
             }
         }
