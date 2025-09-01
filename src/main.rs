@@ -49,8 +49,7 @@ impl std::io::Write for Output {
             printer
                 .print(String::from_utf8_lossy(buf).to_string())
                 .map_err(|_| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    std::io::Error::other(
                         "failed to write to external printer",
                     )
                 })?;

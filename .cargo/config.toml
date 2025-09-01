@@ -7,3 +7,7 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # aarch64 musl clear_cache
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C"  , "link-arg=-lgcc_s"]
+
+
+[future-incompat-report]
+frequency = "always"

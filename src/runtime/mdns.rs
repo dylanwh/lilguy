@@ -115,7 +115,7 @@ impl LuaUserData for LuaServiceInfo {
         fields.add_field_method_get("addresses", |lua, this| {
             let addresses = this.0.get_addresses();
             addresses
-                .into_iter()
+                .iter()
                 .map(ToString::to_string)
                 .to_lua_array(lua)
         });
@@ -148,7 +148,7 @@ async fn mdns_browse(lua: Lua, (service_type, callbacks): (String, LuaTable)) ->
 }
 
 fn mdns_register(lua: &Lua, service_info: LuaAnyUserData) -> LuaResult<()> {
-    let daemon = get_service_daemon(&lua)?;
+    let daemon = get_service_daemon(lua)?;
     let LuaServiceInfo(service_info) = service_info.borrow::<LuaServiceInfo>()?.clone();
 
     daemon.register(service_info).into_lua_err()

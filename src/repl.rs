@@ -131,15 +131,16 @@ fn read_loop(
                 }
             }
             Ok(Signal::CtrlC) => {
-                printer.print("^C".to_string());
+                if let Err(e) = printer.print("^C".to_string()) {
+                    return Err(e.into())
+                }
             }
             Ok(Signal::CtrlD) => {
                 tracing::info!("^D");
                 break;
             }
             Err(e) => {
-                printer.print(format!("Error: {}", e));
-                break;
+                return Err(e.into())
             }
         }
     }
@@ -507,15 +508,15 @@ impl reedline::Highlighter for LuaHighlighter {
 }
 
 impl Prompt for PromptConfig {
-    fn render_prompt_left(&self) -> Cow<str> {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
         self.left.as_deref().unwrap_or(">>> ").into()
     }
 
-    fn render_prompt_right(&self) -> Cow<str> {
+    fn render_prompt_right(&self) -> Cow<'_, str> {
         self.right.as_deref().unwrap_or("").into()
     }
 
-    fn render_prompt_indicator(&self, arg: PromptEditMode) -> Cow<str> {
+    fn render_prompt_indicator(&self, arg: PromptEditMode) -> Cow<'_, str> {
         let mode = match arg {
             PromptEditMode::Default | PromptEditMode::Emacs => "",
             PromptEditMode::Vi(ref prompt_vi_mode) => match prompt_vi_mode {
@@ -531,14 +532,14 @@ impl Prompt for PromptConfig {
             .into()
     }
 
-    fn render_prompt_multiline_indicator(&self) -> Cow<str> {
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
         self.multiline_indicator.as_deref().unwrap_or("... ").into()
     }
 
     fn render_prompt_history_search_indicator(
         &self,
         history_search: reedline::PromptHistorySearch,
-    ) -> Cow<str> {
+    ) -> Cow<'_, str> {
         let status = match history_search.status {
             reedline::PromptHistorySearchStatus::Passing => "passing",
             reedline::PromptHistorySearchStatus::Failing => "failing",

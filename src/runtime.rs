@@ -61,7 +61,7 @@ impl Runtime {
             .map(|arg| arg.into_lua(&lua))
             .collect::<Result<Vec<LuaValue>, _>>()?;
         let args = LuaMultiValue::from(args);
-        func.call_async(args).await?;
+        func.call_async::<()>(args).await?;
         Ok(())
     }
 
@@ -273,7 +273,7 @@ impl Runtime {
         http::set_cookie_key(&lua, db).await?;
 
         let require = globals.get::<LuaFunction>("require")?;
-        require.call_async("app").await?;
+        require.call_async::<()>("app").await?;
         Ok(lua)
     }
 }
