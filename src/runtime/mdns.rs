@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo, TxtProperties};
 use mlua::prelude::*;
 use serde::{ser::SerializeMap, Serialize};
 
@@ -26,6 +26,49 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
 struct LuaServiceDaemon(ServiceDaemon);
 
 impl LuaUserData for LuaServiceDaemon {}
+
+struct LuaResolvedService(Box<ResolvedService>);
+
+impl Serialize for LuaResolvedService {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let service = &self.0;
+        let mut map = serializer.serialize_map(Some(6))?;
+        map.serialize_entry("ty_domain", &service.ty_domain)?;
+        map.serialize_entry("sub_ty_domain", &service.sub_ty_domain)?;
+        map.serialize_entry("fullname", &service.fullname)?;
+        map.serialize_entry("host", &service.host)?;
+        map.serialize_entry("port", &service.port)?;
+        map.serialize_entry("addresses", &LuaAddresses(&service.addresses))?;
+        map.serialize_entry("txt_properties", &LuaTxtProperties(&service.txt_properties))?;
+
+        map.end()
+    }
+}
+
+struct LuaAddresses<'a>(&'a HashSet<ScopedIp>);
+
+impl<'a> Serialize for LuaAddresses<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(self.0.iter().map(|ip| ip.to_string()))
+    }
+}
+
+struct LuaTxtProperties<'a>(&'a TxtProperties);
+
+impl<'a> Serialize for LuaTxtProperties<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_map(self.0.iter().map(|p| (p.key(), p.val())))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LuaServiceInfo(ServiceInfo);
@@ -159,10 +202,10 @@ async fn process_event(lua: &Lua, event: ServiceEvent, callbacks: &Callbacks) ->
                 callback.call_async::<()>((service_type, fullname)).await?;
             }
         }
-        ServiceEvent::ServiceResolved(service_info) => {
+        ServiceEvent::ServiceResolved(service) => {
             if let Some(ref callback) = callbacks.service_resolved {
                 callback
-                    .call_async::<()>(lua.create_ser_userdata(LuaServiceInfo(service_info)))
+                    .call_async::<()>(lua.to_value(&LuaResolvedService(service)))
                     .await?;
             }
         }
@@ -176,6 +219,7 @@ async fn process_event(lua: &Lua, event: ServiceEvent, callbacks: &Callbacks) ->
                 callback.call_async::<()>((service_type,)).await?;
             }
         }
+        _ => {}
     }
 
     Ok(())

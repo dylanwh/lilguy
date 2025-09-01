@@ -357,7 +357,7 @@ pub async fn create_request(lua: &Lua, request: Request<Body>) -> Result<LuaTabl
         _ => req.set("body", lua.create_string(&body)?),
     }?;
 
-    req.set_metatable(lua.named_registry_value::<LuaTable>(REQUEST_MT)?.into());
+    req.set_metatable(lua.named_registry_value::<LuaTable>(REQUEST_MT)?.into())?;
 
     Ok(req)
 }
@@ -367,7 +367,7 @@ pub fn new_response(lua: &Lua) -> Result<LuaTable, LuaError> {
     res.set("status", 200)?;
     res.set("headers", lua.create_ser_userdata(LuaHeaders::new())?)?;
     res.set("body", "")?;
-    res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into());
+    res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into())?;
     Ok(res)
 }
 
@@ -396,7 +396,7 @@ pub async fn create_response(
     res.set("status", status)?;
     res.set("headers", headers)?;
     res.set("body", lua.create_string(&body)?)?;
-    res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into());
+    res.set_metatable(lua.named_registry_value::<LuaTable>(RESPONSE_MT)?.into())?;
 
     Ok(res)
 }
