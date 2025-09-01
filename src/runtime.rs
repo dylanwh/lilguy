@@ -13,7 +13,6 @@ use mlua::IntoLua;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{
-    collections::HashSet,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},

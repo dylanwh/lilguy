@@ -1,8 +1,8 @@
-use std::{borrow::Cow, collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
-use mdns_sd::{Receiver, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use mlua::prelude::*;
-use serde::{ser::SerializeMap, Deserialize, Serialize};
+use serde::{ser::SerializeMap, Serialize};
 
 use super::ToLuaArray;
 
